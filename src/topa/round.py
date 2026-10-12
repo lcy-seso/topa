@@ -214,7 +214,7 @@ def start(config: Config, number: int, *, dry_run: bool = False, force: bool = F
         tileops_base = sh.run(["git", "-C", worktree, "rev-parse", "HEAD"])
 
         sh.note("preparing TileFoundry")
-        prepared = foundry.prepare(config)
+        prepared = foundry.prepare(config, (worktree / "pyproject.toml").read_text())
         source, foundry_git = foundry.source(config, slug, prepared.commit)
         ledger.append("foundry", round=slug, foundry_source=str(source), tilefoundry_base=prepared.commit)
 

@@ -67,7 +67,25 @@ It needs `claude`, `docker` with the NVIDIA runtime, `gh` (logged in), `git`, `h
 | `topa gate` / `topa pr [--reviewed]` | check the evidence / open the PR (run by the agent) |
 | `topa run <cmd>` | one command against a TileOPs worktree in a throwaway container |
 
-## Where things live
+## Layout
+
+### Repository
+
+- `src/topa/kit/round/brief.md` is the round contract. `round start` fills its
+  placeholders, and an unfilled one is an error.
+- `src/topa/knowledge/tilelang.md` holds TileLang and ptxas facts that earlier rounds
+  confirmed. Rounds read it. People add to it from round reports.
+- `src/topa/kit/container/` holds the agent image: the TileOPs runner image plus sshd.
+- `src/topa/kit/stage.py` runs in the agent image, once per image and dependency list. It stages, for offline
+  install, the wheels TileFoundry needs beyond the runner and the build backends of
+  TileFoundry and TileOPs.
+- `src/topa/gate.py` is the evidence gate that runs before a PR.
+- `src/topa/grade.py` follows `scripts/gen_bench_pages.py` in tile-ai/TileOPs.github.io.
+  Change both together.
+- `.claude/skills/topa-hunt` and `topa-round` drive these commands when you work in this
+  repository.
+
+### On the machine
 
 ```text
 ~/.topa/
@@ -76,7 +94,7 @@ It needs `claude`, `docker` with the NVIDIA runtime, `gh` (logged in), `git`, `h
   rounds/<slug>/               the round's output; topa never deletes it
   cache/                       rebuilt on demand; safe to delete when no round runs
     nightly/                   benchmark snapshots
-    tilefoundry/<key>/         wheels and build backend TileFoundry needs beyond the runner
+    stage/<key>/               wheels and build backends a round installs beyond the runner
     tilelang/  triton/         kernel compile caches, shared by all rounds
   checkouts/tilefoundry/<slug>/  the round's TileFoundry checkout
   ssh/<slug>/  ssh-config/     the round's SSH key and host entry
@@ -95,17 +113,3 @@ What each step keeps:
 | herdr pane and agent | running | closed | closed |
 
 The PR and the TileFoundry issue live on GitHub.
-
-The Claude Code skills `topa-hunt` and `topa-round` in `.claude/skills/` drive these
-commands when you work in this repository.
-
-## Layout
-
-- `src/topa/kit/round/brief.md` is the round contract. `round start` fills its
-  placeholders, and an unfilled one is an error.
-- `src/topa/knowledge/tilelang.md` holds TileLang and ptxas facts that earlier rounds
-  confirmed. Rounds read it. People add to it from round reports.
-- `src/topa/kit/container/` holds the agent image: the TileOPs runner image plus sshd.
-- `src/topa/gate.py` is the evidence gate that runs before a PR.
-- `src/topa/grade.py` follows `scripts/gen_bench_pages.py` in tile-ai/TileOPs.github.io.
-  Change both together.

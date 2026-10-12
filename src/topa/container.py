@@ -149,8 +149,8 @@ def start(
             "--volume", f"{round_dir}:{round_dir}",
             "--volume", f"{foundry_source}:{foundry_source}",
             "--volume", f"{foundry_git}:{foundry_git}",
-            "--volume", f"{foundry.stage / 'wheels'}:/opt/tilefoundry/wheels:ro",
-            "--volume", f"{foundry.stage / 'build-tools'}:/opt/tilefoundry/build-tools:ro",
+            "--volume", f"{foundry.stage / 'wheels'}:/opt/topa/wheels:ro",
+            "--volume", f"{foundry.stage / 'build-tools'}:/opt/topa/build-tools:ro",
             "--volume", f"{tilelang_cache}:/ci-cache/tilelang",
             "--volume", f"{triton_cache}:/ci-cache/triton",
             *auth_mounts,
@@ -217,19 +217,25 @@ def start(
 
 
 def _install(config: Config, container: str, worktree: Path, foundry_source: Path) -> None:
-    """Install TileFoundry and TileOPs editable, offline, without changing the runner's stack."""
+    """Install TileFoundry and TileOPs editable, offline, without changing the runner's stack.
+
+    Each project builds with its own staged backend (`--no-build-isolation` and
+    PYTHONPATH). Neither installs dependencies: the staged wheels are what the runner
+    lacks for TileFoundry, and the runner is what TileOPs runs on.
+    """
     pip = "python -m pip --quiet --disable-pip-version-check install --root-user-action=ignore --no-deps"
     sh.docker(config, "exec", container, "bash", "-c",
-              f"set -e; shopt -s nullglob; wheels=(/opt/tilefoundry/wheels/*.whl); "
+              f"set -e; shopt -s nullglob; wheels=(/opt/topa/wheels/*.whl); "
               f'if (( ${{#wheels[@]}} )); then {pip} --no-index "${{wheels[@]}}"; fi')
-    sh.docker(config, "exec", "--env", "PYTHONPATH=/opt/tilefoundry/build-tools",
-              "--workdir", str(foundry_source), container, "bash", "-c",
-              f"{pip} --no-build-isolation --editable .")
-    sh.docker(config, "exec", "--workdir", str(worktree), container, "bash", "-c",
-              f"{pip} --editable .")
+    for name, path in (("tilefoundry", foundry_source), ("tileops", worktree)):
+        sh.docker(config, "exec", "--env", f"PYTHONPATH=/opt/topa/build-tools/{name}",
+                  "--workdir", str(path), container, "bash", "-c",
+                  f"{pip} --no-index --no-build-isolation --editable .")
     sh.docker(config, "exec", container, "python", "-c",
-              "import pathlib, tilefoundry; p = pathlib.Path(tilefoundry.__file__).resolve(); "
-              f"assert str(p).startswith('{foundry_source}/'), p")
+              "import pathlib, tilefoundry, tileops\n"
+              f"for module, root in ((tilefoundry, '{foundry_source}/'), (tileops, '{worktree}/')):\n"
+              "    path = str(pathlib.Path(module.__file__).resolve())\n"
+              "    assert path.startswith(root), path")
 
 
 def remove(config: Config, slug: str) -> list[str]:

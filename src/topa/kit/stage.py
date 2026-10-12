@@ -1,6 +1,6 @@
-"""Run once in the agent image: stage what TileFoundry needs beyond the runner.
+"""Run once in the agent image: stage what a round installs beyond the runner.
 
-Usage: python stage_tilefoundry.py <pyproject.toml> <out-dir>
+Usage: python stage.py <tilefoundry pyproject> <tileops pyproject> <out-dir>
 
 The runner already carries the compute stack, so a round installs as little as it
 can, offline, and changes nothing the runner has:
@@ -8,8 +8,10 @@ can, offline, and changes nothing the runner has:
 - `out/wheels/`: exact wheels of the TileFoundry dependencies the runner lacks, and
   of what they need that the runner lacks too. Resolved against the installed
   packages, so nothing the runner has is downloaded again.
-- `out/build-tools/`: TileFoundry's build backend, reached by PYTHONPATH, so the
-  editable install needs no network and leaves the runner's setuptools alone.
+- `out/build-tools/<project>/`: the build backend of TileFoundry and of TileOPs, each
+  in its own directory and reached by PYTHONPATH, so both editable installs need no
+  network and leave the runner's setuptools alone. TileOPs' runtime dependencies are
+  the runner itself, so none are staged for it.
 - `out/report.json`: what was staged, and the dependencies the runner has at a
   version TileFoundry does not ask for. Those keep the runner's version.
 """
@@ -28,11 +30,15 @@ except ImportError:  # pip always carries a copy
 
 PIP = [sys.executable, "-m", "pip", "--quiet", "--disable-pip-version-check"]
 
-pyproject, out = Path(sys.argv[1]), Path(sys.argv[2])
-with pyproject.open("rb") as handle:
-    data = tomllib.load(handle)
-declared = data["project"].get("dependencies", [])
-backend = data["build-system"]["requires"]
+def load(path: str) -> dict:
+    with open(path, "rb") as handle:
+        return tomllib.load(handle)
+
+
+tilefoundry, tileops, out = load(sys.argv[1]), load(sys.argv[2]), Path(sys.argv[3])
+declared = tilefoundry["project"].get("dependencies", [])
+backends = {name: data["build-system"]["requires"]
+            for name, data in (("tilefoundry", tilefoundry), ("tileops", tileops))}
 
 missing, mismatched = [], []
 for text in declared:
@@ -58,7 +64,8 @@ if missing:
         pins.append(f"{item['metadata']['name']}=={item['metadata']['version']}")
     subprocess.run([*PIP, "download", "--no-deps", "--only-binary=:all:", "--dest", str(wheels), *pins],
                    check=True)
-subprocess.run([*PIP, "install", "--root-user-action=ignore", "--target", str(out / "build-tools"),
-                *backend], check=True)
+for name, requires in backends.items():
+    subprocess.run([*PIP, "install", "--root-user-action=ignore", "--target", str(out / "build-tools" / name),
+                    *requires], check=True)
 (out / "report.json").write_text(json.dumps(
-    {"missing": missing, "staged": pins, "build_backend": backend, "mismatched": mismatched}, indent=2) + "\n")
+    {"missing": missing, "staged": pins, "build_backends": backends, "mismatched": mismatched}, indent=2) + "\n")

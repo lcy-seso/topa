@@ -24,37 +24,39 @@ from topa.container import proxy_env
 @dataclass(frozen=True)
 class Prepared:
     commit: str
-    stage: Path  # wheels/, build-tools/, report.json from kit/stage_tilefoundry.py
+    stage: Path  # wheels/, build-tools/<project>/, report.json from kit/stage.py
 
     @property
     def report(self) -> dict:
         return json.loads((self.stage / "report.json").read_text())
 
 
-def _stage(config: Config, commit: str) -> Path:
-    """Run kit/stage_tilefoundry.py in the agent image, once per image and dependency list."""
+def _stage(config: Config, commit: str, tileops_pyproject: str) -> Path:
+    """Run kit/stage.py in the agent image, once per image and declared requirements."""
     pyproject = sh.run(["git", "-C", config.tilefoundry_repo, "show", f"{commit}:pyproject.toml"])
-    data = tomllib.loads(pyproject)
+    data, tileops = tomllib.loads(pyproject), tomllib.loads(tileops_pyproject)
     image = sh.docker(config, "image", "inspect", config.agent_image, "--format", "{{.Id}}")
     key = hashlib.sha256(json.dumps([image, data["project"].get("dependencies", []),
-                                     data["build-system"]["requires"]]).encode()).hexdigest()[:16]
-    stage = config.cache / "tilefoundry" / key
+                                     data["build-system"]["requires"],
+                                     tileops["build-system"]["requires"]]).encode()).hexdigest()[:16]
+    stage = config.cache / "stage" / key
     if (stage / "report.json").exists():
         return stage
     shutil.rmtree(stage, ignore_errors=True)
     stage.mkdir(parents=True)
-    (stage / "pyproject.toml").write_text(pyproject + "\n")
-    script = Path(str(files("topa") / "kit" / "stage_tilefoundry.py"))
-    sh.note(f"staging TileFoundry dependencies in {stage}")
+    (stage / "tilefoundry.toml").write_text(pyproject + "\n")
+    (stage / "tileops.toml").write_text(tileops_pyproject)
+    script = Path(str(files("topa") / "kit" / "stage.py"))
+    sh.note(f"staging round dependencies in {stage}")
     sh.docker(config, "run", "--rm", "--entrypoint", "", *proxy_env(config),
               "--volume", f"{stage}:/stage", "--volume", f"{script}:/stage.py:ro",
-              config.agent_image, "python", "/stage.py", "/stage/pyproject.toml", "/stage")
+              config.agent_image, "python", "/stage.py", "/stage/tilefoundry.toml", "/stage/tileops.toml", "/stage")
     return stage
 
 
-def prepare(config: Config) -> Prepared:
+def prepare(config: Config, tileops_pyproject: str) -> Prepared:
     """The TileFoundry commit a new round reads: `tilefoundry_commit`, or the newest main."""
-    root = config.cache / "tilefoundry"
+    root = config.cache / "stage"
     root.mkdir(parents=True, exist_ok=True)
     with (root / ".lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -67,7 +69,7 @@ def prepare(config: Config) -> Prepared:
             sh.run(["git", "-C", repo, "fetch", "--quiet", remote, "main"])
             ref = f"{remote}/main"
         commit = sh.run(["git", "-C", repo, "rev-parse", f"{ref}^{{commit}}"])
-        stage = _stage(config, commit)
+        stage = _stage(config, commit, tileops_pyproject)
     return Prepared(commit=commit, stage=stage)
 
 
