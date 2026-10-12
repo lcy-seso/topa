@@ -1,0 +1,124 @@
+"""Where topa keeps its state, and how it reaches the repositories and machines it drives.
+
+Settings come from `~/.topa/config.toml`; a `TOPA_<NAME>` environment variable
+overrides any one of them for a single command.
+"""
+
+from __future__ import annotations
+
+import os
+import tomllib
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+HOME = Path(os.environ.get("TOPA_HOME", Path.home() / ".topa")).expanduser()
+CONFIG = HOME / "config.toml"
+
+DEFAULTS: dict[str, Any] = {
+    "tileops_repo": "~/TileOPs",
+    "tilefoundry_repo": "~/TileFoundry",
+    "worktree_root": "~/TileOPs-worktrees",
+    "cache_root": "~/.cache/tileops-runner",
+    "runner_image": "ghcr.io/tile-ai/tileops-runner:cu132-torch2.13-tl-afcebed1-dev",
+    "agent_image": "topa:agent",
+    "gpu": None,
+    "gpu_exclude": [4, 5],
+    "docker_host": None,
+    "docker_bootstrap": None,
+    "proxy_host": "10.0.2.2",
+    "no_proxy": "localhost,127.0.0.1,pypi.org,files.pythonhosted.org,download.pytorch.org",
+    "upstream": "tile-ai/TileOPs",
+    "fork_owner": None,
+    "tracker": 2271,
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "tilefoundry_commit": None,
+    "max_rounds": 2,
+}
+PATHS = {"tileops_repo", "tilefoundry_repo", "worktree_root", "cache_root"}
+
+
+@dataclass(frozen=True)
+class Config:
+    tileops_repo: Path
+    tilefoundry_repo: Path
+    worktree_root: Path
+    cache_root: Path
+    runner_image: str
+    agent_image: str
+    gpu: int | None
+    gpu_exclude: tuple[int, ...]
+    docker_host: str | None
+    docker_bootstrap: str | None
+    proxy_host: str
+    no_proxy: str
+    upstream: str
+    fork_owner: str | None
+    tracker: int
+    model: str
+    effort: str
+    tilefoundry_commit: str | None
+    max_rounds: int
+
+    @property
+    def rounds(self) -> Path:
+        return HOME / "rounds"
+
+    @property
+    def ssh_config_dir(self) -> Path:
+        return HOME / "ssh-config"
+
+    @property
+    def ssh_key_root(self) -> Path:
+        return HOME / "ssh"
+
+    @property
+    def foundry_root(self) -> Path:
+        return self.cache_root / "tilefoundry"
+
+
+def _coerce(name: str, value: Any) -> Any:
+    if value is None or value == "":
+        return None if DEFAULTS[name] is None else DEFAULTS[name]
+    if name in PATHS:
+        return Path(str(value)).expanduser()
+    if name == "gpu":
+        return int(value)
+    if name in {"tracker", "max_rounds"}:
+        return int(value)
+    if name == "gpu_exclude":
+        if isinstance(value, str):
+            value = [part for part in value.split(",") if part.strip()]
+        return tuple(int(part) for part in value)
+    return str(value)
+
+
+def load() -> Config:
+    values = dict(DEFAULTS)
+    if CONFIG.is_file():
+        with CONFIG.open("rb") as handle:
+            values.update(tomllib.load(handle))
+    for name in DEFAULTS:
+        override = os.environ.get(f"TOPA_{name.upper()}")
+        if override is not None:
+            values[name] = override
+    unknown = set(values) - set(DEFAULTS)
+    if unknown:
+        raise SystemExit(f"unknown settings in {CONFIG}: {', '.join(sorted(unknown))}")
+    return Config(**{name: _coerce(name, values[name]) for name in DEFAULTS})
+
+
+def default_toml() -> str:
+    """A config file naming every setting, the unset ones commented out."""
+    lines = ["# topa settings. TOPA_<NAME> in the environment overrides one per command.", ""]
+    for name, value in DEFAULTS.items():
+        if value is None:
+            lines.append(f"# {name} = ")
+        elif isinstance(value, list):
+            lines.append(f"{name} = [{', '.join(str(v) for v in value)}]")
+        elif isinstance(value, int):
+            lines.append(f"{name} = {value}")
+        else:
+            lines.append(f'{name} = "{value}"')
+    return "\n".join(lines) + "\n"

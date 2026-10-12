@@ -1,0 +1,60 @@
+"""The TileFoundry a round reads: a commit and a source checkout of it.
+
+The source is read-only for a round -- it reads and runs TileFoundry and reports what
+blocks it as one issue. The checkout is still a real one, because `tilefoundry
+tutorial`, `spec` and `tests/fixtures/schedule/` read from it and are not in a wheel.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
+
+from topa import sh
+from topa.config import Config
+
+
+@dataclass(frozen=True)
+class Prepared:
+    commit: str
+
+
+def prepare(config: Config) -> Prepared:
+    """The TileFoundry commit a new round reads: `tilefoundry_commit`, or the newest main."""
+    root = config.foundry_root
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / ".prepare.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        repo = config.tilefoundry_repo
+        if config.tilefoundry_commit:
+            ref = config.tilefoundry_commit
+        else:
+            remotes = sh.run(["git", "-C", repo, "remote"]).split()
+            remote = "upstream" if "upstream" in remotes else "origin"
+            sh.run(["git", "-C", repo, "fetch", "--quiet", remote, "main"])
+            ref = f"{remote}/main"
+        commit = sh.run(["git", "-C", repo, "rev-parse", f"{ref}^{{commit}}"])
+    return Prepared(commit=commit)
+
+
+def source(config: Config, slug: str, base: str) -> tuple[Path, Path]:
+    """A detached checkout of *base* for this round, and the git dir it shares."""
+    path = config.foundry_root / "source" / slug
+    repo = config.tilefoundry_repo
+    if not (path / ".git").exists():
+        shutil.rmtree(path, ignore_errors=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        sh.run(["git", "-C", repo, "worktree", "prune"])
+        sh.run(["git", "-C", repo, "worktree", "add", "--detach", path, base])
+    git_dir = Path(sh.run(["git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"]))
+    return path, git_dir
+
+
+def remove_source(config: Config, path: Path) -> None:
+    if not path.exists():
+        return
+    if not sh.ok(["git", "-C", config.tilefoundry_repo, "worktree", "remove", "--force", path]):
+        shutil.rmtree(path, ignore_errors=True)
+    sh.run(["git", "-C", config.tilefoundry_repo, "worktree", "prune"], check=False)
