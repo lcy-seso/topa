@@ -24,43 +24,15 @@ One round is one agent working one [TileOPs](https://github.com/tile-ai/TileOPs)
 
 ```mermaid
 flowchart LR
-    NIGHTLY["TileOPs nightly benchmark"] -- "topa hunt" --> PICK
-
-    subgraph HOST["your machine"]
-        direction TB
-        YOU["you"] --- PICK["pick behind ops"]
-        PICK -- "topa issue new" --> ISSUE["one issue per op<br/>assigned to you"]
-        ISSUE -- "topa round start" --> AGENT
-
-        subgraph ROUND["one round, one herdr pane"]
-            direction TB
-            AGENT["agent<br/>reads brief.md, writes files"]
-            AGENT -- "every non-host command<br/>(PreToolUse hook, ssh)" --> BOX["round container<br/>one GPU, tilefoundry, TileOPs"]
-        end
-
-        YOU -. "topa round status / say / stop" .-> AGENT
-    end
-
-    AGENT -- "topa pr" --> PR["TileOPs PR<br/>you review, you merge"]
-    AGENT -- "findings" --> TFI["one TileFoundry issue"]
-    AGENT -- "report.md" --> KNOW["knowledge/tilelang.md"]
-
-    PR --> NIGHTLY
-    TFI --> TF["TileFoundry improves"]
-    TF --> BOX
-    KNOW --> AGENT
-
-    classDef human fill:#FFE0B2,stroke:#E65100,stroke-width:2px,color:#1A1A1A
-    classDef agent fill:#D6E4FF,stroke:#2952CC,stroke-width:1.5px,color:#1A1A1A
-    classDef artifact fill:#F0F0F0,stroke:#757575,stroke-width:1.5px,color:#1A1A1A
-    class YOU,PICK human
-    class AGENT,BOX agent
-    class NIGHTLY,ISSUE,PR,TFI,TF,KNOW artifact
+    N["nightly benchmark"] -- "topa hunt" --> I["issue per op"]
+    I -- "topa round start" --> A["agent + GPU container"]
+    A -- "topa pr" --> P["TileOPs PR"]
+    A -- "findings" --> F["TileFoundry issue"]
+    P --> N
+    F -- "TileFoundry fix" --> A
 ```
 
-A merged PR moves the nightly, and the next hunt sees it. A TileFoundry issue becomes a
-TileFoundry fix, and the next round gets it. A person promotes the TileLang facts in a
-round report into the knowledge file, and the next agent reads them.
+A merged PR moves the nightly. A TileFoundry fix reaches the next round.
 
 ## Install
 

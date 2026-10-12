@@ -8,17 +8,18 @@ they have on the host, and a command carries over unchanged.
 from __future__ import annotations
 
 import hashlib
-import json
 import os
-import shlex
 import shutil
 import time
 from dataclasses import dataclass
-from importlib.resources import files
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from topa import gpu, sh
 from topa.config import Config
+
+if TYPE_CHECKING:
+    from topa.foundry import Prepared
 
 PROXY_NAMES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
 
@@ -32,7 +33,6 @@ class Started:
     port: int
     alias: str
     key: Path
-    mismatched: list[str]
 
 
 def _sha(*parts: object) -> str:
@@ -67,7 +67,7 @@ def _auth(worktree_git: Path) -> tuple[list[str], list[str], tuple[object, ...]]
     return mounts, env, (worktree_git, git_config, gh_config, gh_bin, ssh_dir)
 
 
-def _proxy(config: Config) -> list[str]:
+def proxy_env(config: Config) -> list[str]:
     """The host proxy listens on loopback; rootless Docker reaches it as `proxy_host`."""
     env = []
     for var in PROXY_NAMES:
@@ -92,6 +92,7 @@ def start(
     slug: str,
     worktree: Path,
     round_dir: Path,
+    foundry: Prepared,
     foundry_source: Path,
     foundry_git: Path,
     foundry_base: str,
@@ -110,13 +111,12 @@ def start(
 
     tilelang_cache = config.cache_root / "runtime-cache" / "tilelang"
     triton_cache = config.cache_root / "runtime-cache" / "triton"
-    pip_cache = config.cache_root / "pip"
-    for cache in (tilelang_cache, triton_cache, pip_cache):
+    for cache in (tilelang_cache, triton_cache):
         cache.mkdir(parents=True, exist_ok=True)
 
     auth_mounts, auth_env, auth_parts = _auth(worktree_git)
-    proxy_env = _proxy(config)
-    auth_key = _sha(foundry_git, *auth_parts, *proxy_env)
+    proxy_env_args = proxy_env(config)
+    auth_key = _sha(foundry_git, *auth_parts, *proxy_env_args)
 
     choice: gpu.Choice | None = None
     exists = sh.docker_ok(config, "container", "inspect", container)
@@ -149,7 +149,8 @@ def start(
             "--volume", f"{round_dir}:{round_dir}",
             "--volume", f"{foundry_source}:{foundry_source}",
             "--volume", f"{foundry_git}:{foundry_git}",
-            "--volume", f"{pip_cache}:/root/.cache/pip",
+            "--volume", f"{foundry.stage / 'wheels'}:/opt/tilefoundry/wheels:ro",
+            "--volume", f"{foundry.stage / 'build-tools'}:/opt/tilefoundry/build-tools:ro",
             "--volume", f"{tilelang_cache}:/ci-cache/tilelang",
             "--volume", f"{triton_cache}:/ci-cache/triton",
             *auth_mounts,
@@ -166,17 +167,16 @@ def start(
             "--env", "TILELANG_TMP_DIR=/ci-cache/tilelang/tmp",
             "--env", "TRITON_CACHE_DIR=/ci-cache/triton",
             *auth_env,
-            *proxy_env,
+            *proxy_env_args,
             config.agent_image,
         )
     assert choice is not None
     if sh.docker(config, "inspect", "--format", "{{.State.Running}}", container) != "true":
         sh.docker(config, "start", container)
 
-    marker = f"/var/lib/topa-foundry-{foundry_base}"
-    mismatched: list[str] = []
+    marker = f"/var/lib/topa-foundry-{foundry_base}-{foundry.stage.name}"
     if not sh.docker_ok(config, "exec", container, "test", "-f", marker):
-        mismatched = _install(config, container, worktree, foundry_source)
+        _install(config, container, worktree, foundry_source)
         sh.docker(config, "exec", container, "touch", marker)
 
     ports = sh.docker(config, "port", container, "22/tcp")
@@ -213,34 +213,23 @@ def start(
         if not sh.ok(["ssh", host_alias, check]):
             raise SystemExit("the mounted GitHub credentials are not usable inside the container")
 
-    return Started(container, choice.index, choice.warning, image, port, host_alias, key, mismatched)
+    return Started(container, choice.index, choice.warning, image, port, host_alias, key)
 
 
-def _install(config: Config, container: str, worktree: Path, foundry_source: Path) -> list[str]:
-    """Install TileFoundry and TileOPs editable, without changing the runner's stack.
-
-    Only TileFoundry dependencies the runner lacks are installed, held to the versions
-    of every package the runner has. A dependency the runner has at another version
-    keeps the runner's version; the mismatches are returned so the round can see them.
-    """
-    pip = "python -m pip --quiet --disable-pip-version-check"
-    install = f"{pip} install --root-user-action=ignore"
-    script = (files("topa") / "kit" / "tilefoundry_deps.py").read_text()
-    report = json.loads(sh.docker(config, "exec", "-i", container, "python", "-",
-                                  str(foundry_source / "pyproject.toml"), input=script))
-    if report["missing"]:
-        sh.docker(config, "exec", container, "bash", "-c",
-                  f"set -e; {pip} list --format=freeze > /tmp/runner-constraints.txt; "
-                  f"{install} --constraint /tmp/runner-constraints.txt "
-                  + " ".join(shlex.quote(text) for text in report["missing"]))
-    sh.docker(config, "exec", "--workdir", str(foundry_source), container, "bash", "-c",
-              f"{install} --no-deps --editable .")
+def _install(config: Config, container: str, worktree: Path, foundry_source: Path) -> None:
+    """Install TileFoundry and TileOPs editable, offline, without changing the runner's stack."""
+    pip = "python -m pip --quiet --disable-pip-version-check install --root-user-action=ignore --no-deps"
+    sh.docker(config, "exec", container, "bash", "-c",
+              f"set -e; shopt -s nullglob; wheels=(/opt/tilefoundry/wheels/*.whl); "
+              f'if (( ${{#wheels[@]}} )); then {pip} --no-index "${{wheels[@]}}"; fi')
+    sh.docker(config, "exec", "--env", "PYTHONPATH=/opt/tilefoundry/build-tools",
+              "--workdir", str(foundry_source), container, "bash", "-c",
+              f"{pip} --no-build-isolation --editable .")
     sh.docker(config, "exec", "--workdir", str(worktree), container, "bash", "-c",
-              f"{install} --no-deps --editable .")
+              f"{pip} --editable .")
     sh.docker(config, "exec", container, "python", "-c",
               "import pathlib, tilefoundry; p = pathlib.Path(tilefoundry.__file__).resolve(); "
               f"assert str(p).startswith('{foundry_source}/'), p")
-    return report["mismatched"]
 
 
 def remove(config: Config, slug: str) -> list[str]:

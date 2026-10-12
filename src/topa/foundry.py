@@ -1,4 +1,4 @@
-"""The TileFoundry a round reads: a commit and a source checkout of it.
+"""The TileFoundry a round reads: a commit, what it needs staged, and a checkout.
 
 The source is read-only for a round -- it reads and runs TileFoundry and reports what
 blocks it as one issue. The checkout is still a real one, because `tilefoundry
@@ -8,17 +8,48 @@ tutorial`, `spec` and `tests/fixtures/schedule/` read from it and are not in a w
 from __future__ import annotations
 
 import fcntl
+import hashlib
+import json
 import shutil
+import tomllib
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 
 from topa import sh
 from topa.config import Config
+from topa.container import proxy_env
 
 
 @dataclass(frozen=True)
 class Prepared:
     commit: str
+    stage: Path  # wheels/, build-tools/, report.json from kit/stage_tilefoundry.py
+
+    @property
+    def report(self) -> dict:
+        return json.loads((self.stage / "report.json").read_text())
+
+
+def _stage(config: Config, commit: str) -> Path:
+    """Run kit/stage_tilefoundry.py in the agent image, once per image and dependency list."""
+    pyproject = sh.run(["git", "-C", config.tilefoundry_repo, "show", f"{commit}:pyproject.toml"])
+    data = tomllib.loads(pyproject)
+    image = sh.docker(config, "image", "inspect", config.agent_image, "--format", "{{.Id}}")
+    key = hashlib.sha256(json.dumps([image, data["project"].get("dependencies", []),
+                                     data["build-system"]["requires"]]).encode()).hexdigest()[:16]
+    stage = config.foundry_root / "stage" / key
+    if (stage / "report.json").exists():
+        return stage
+    shutil.rmtree(stage, ignore_errors=True)
+    stage.mkdir(parents=True)
+    (stage / "pyproject.toml").write_text(pyproject + "\n")
+    script = Path(str(files("topa") / "kit" / "stage_tilefoundry.py"))
+    sh.note(f"staging TileFoundry dependencies in {stage}")
+    sh.docker(config, "run", "--rm", "--entrypoint", "", *proxy_env(config),
+              "--volume", f"{stage}:/stage", "--volume", f"{script}:/stage.py:ro",
+              config.agent_image, "python", "/stage.py", "/stage/pyproject.toml", "/stage")
+    return stage
 
 
 def prepare(config: Config) -> Prepared:
@@ -36,7 +67,8 @@ def prepare(config: Config) -> Prepared:
             sh.run(["git", "-C", repo, "fetch", "--quiet", remote, "main"])
             ref = f"{remote}/main"
         commit = sh.run(["git", "-C", repo, "rev-parse", f"{ref}^{{commit}}"])
-    return Prepared(commit=commit)
+        stage = _stage(config, commit)
+    return Prepared(commit=commit, stage=stage)
 
 
 def source(config: Config, slug: str, base: str) -> tuple[Path, Path]:

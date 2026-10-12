@@ -228,11 +228,11 @@ def start(config: Config, number: int, *, dry_run: bool = False, force: bool = F
 
         sh.note("starting the container")
         started = container.start(config, slug=slug, worktree=worktree, round_dir=round_dir,
-                                  foundry_source=source, foundry_git=foundry_git,
+                                  foundry=prepared, foundry_source=source, foundry_git=foundry_git,
                                   foundry_base=prepared.commit)
         if started.gpu_warning:
             sh.note(f"warning: {started.gpu_warning}")
-        for item in started.mismatched:
+        for item in prepared.report["mismatched"]:
             sh.note(f"warning: kept {item}")
         meta = {
             **plan, "issue_url": issue.url, "upstream": config.upstream,
@@ -244,7 +244,7 @@ def start(config: Config, number: int, *, dry_run: bool = False, force: bool = F
         }
         current = Round(round_dir, meta)
         current.save()
-        (round_dir / "environment.md").write_text(_environment(meta, started.gpu_warning, started.mismatched))
+        (round_dir / "environment.md").write_text(_environment(meta, started.gpu_warning, prepared.report["mismatched"]))
 
         sh.note(f"starting the agent in {pane}")
         _cd_pane(pane, round_dir)
