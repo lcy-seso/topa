@@ -109,8 +109,8 @@ def start(
         sh.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key])
     public_key = key.with_suffix(".pub").read_text().strip()
 
-    tilelang_cache = config.cache_root / "runtime-cache" / "tilelang"
-    triton_cache = config.cache_root / "runtime-cache" / "triton"
+    tilelang_cache = config.cache / "tilelang"
+    triton_cache = config.cache / "triton"
     for cache in (tilelang_cache, triton_cache):
         cache.mkdir(parents=True, exist_ok=True)
 

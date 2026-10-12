@@ -19,7 +19,6 @@ DEFAULTS: dict[str, Any] = {
     "tileops_repo": "~/TileOPs",
     "tilefoundry_repo": "~/TileFoundry",
     "worktree_root": "~/TileOPs-worktrees",
-    "cache_root": "~/.cache/tileops-runner",
     "runner_image": "ghcr.io/tile-ai/tileops-runner:cu132-torch2.13-tl-afcebed1-dev",
     "agent_image": "topa:agent",
     "gpu": None,
@@ -36,7 +35,7 @@ DEFAULTS: dict[str, Any] = {
     "tilefoundry_commit": None,
     "max_rounds": 2,
 }
-PATHS = {"tileops_repo", "tilefoundry_repo", "worktree_root", "cache_root"}
+PATHS = {"tileops_repo", "tilefoundry_repo", "worktree_root"}
 
 
 @dataclass(frozen=True)
@@ -44,7 +43,6 @@ class Config:
     tileops_repo: Path
     tilefoundry_repo: Path
     worktree_root: Path
-    cache_root: Path
     runner_image: str
     agent_image: str
     gpu: int | None
@@ -74,8 +72,14 @@ class Config:
         return HOME / "ssh"
 
     @property
-    def foundry_root(self) -> Path:
-        return self.cache_root / "tilefoundry"
+    def cache(self) -> Path:
+        """Long-lived and rebuilt on demand: safe to delete when no round runs."""
+        return HOME / "cache"
+
+    @property
+    def checkouts(self) -> Path:
+        """Per-round TileFoundry checkouts, removed by `topa round stop --rm`."""
+        return HOME / "checkouts" / "tilefoundry"
 
 
 def _coerce(name: str, value: Any) -> Any:

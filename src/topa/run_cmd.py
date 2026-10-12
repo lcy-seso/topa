@@ -31,7 +31,7 @@ def run(config: Config, worktree: Path, command: list[str]) -> int:
     common = sh.run(["git", "-C", worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"], check=False)
     if common and not Path(common).is_relative_to(worktree):
         mounts += ["--volume", f"{common}:{common}"]
-    caches = config.cache_root / "runtime-cache"
+    caches = config.cache
     for name in ("tilelang", "triton"):
         (caches / name).mkdir(parents=True, exist_ok=True)
         mounts += ["--volume", f"{caches / name}:/ci-cache/{name}"]

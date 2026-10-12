@@ -38,7 +38,7 @@ def _stage(config: Config, commit: str) -> Path:
     image = sh.docker(config, "image", "inspect", config.agent_image, "--format", "{{.Id}}")
     key = hashlib.sha256(json.dumps([image, data["project"].get("dependencies", []),
                                      data["build-system"]["requires"]]).encode()).hexdigest()[:16]
-    stage = config.foundry_root / "stage" / key
+    stage = config.cache / "tilefoundry" / key
     if (stage / "report.json").exists():
         return stage
     shutil.rmtree(stage, ignore_errors=True)
@@ -54,9 +54,9 @@ def _stage(config: Config, commit: str) -> Path:
 
 def prepare(config: Config) -> Prepared:
     """The TileFoundry commit a new round reads: `tilefoundry_commit`, or the newest main."""
-    root = config.foundry_root
+    root = config.cache / "tilefoundry"
     root.mkdir(parents=True, exist_ok=True)
-    with (root / ".prepare.lock").open("w") as lock:
+    with (root / ".lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         repo = config.tilefoundry_repo
         if config.tilefoundry_commit:
@@ -73,7 +73,7 @@ def prepare(config: Config) -> Prepared:
 
 def source(config: Config, slug: str, base: str) -> tuple[Path, Path]:
     """A detached checkout of *base* for this round, and the git dir it shares."""
-    path = config.foundry_root / "source" / slug
+    path = config.checkouts / slug
     repo = config.tilefoundry_repo
     if not (path / ".git").exists():
         shutil.rmtree(path, ignore_errors=True)
