@@ -18,8 +18,9 @@ implementation that goes around TileFoundry, and do not stop. Keep a blocking ex
 minimal reproducer exactly as it fails. Do not reduce it until it passes.**
 
 The requirement of this round is [{{UPSTREAM}}#{{ISSUE}}]({{ISSUE_URL}}), and it is the only
-source. Before you start, read its body and all comments with
-`gh issue view {{ISSUE}} --repo {{UPSTREAM}} --comments`. The goal, the acceptance line, the
+source. Before you start, read its body with `gh issue view {{ISSUE}} --repo {{UPSTREAM}}`
+and all its comments with `gh issue view {{ISSUE}} --repo {{UPSTREAM}} --comments` (without a
+terminal, `--comments` prints the comments only). The goal, the acceptance line, the
 comparison implementations and the code locations are what the issue says.
 
 | Environment | Value |
@@ -62,6 +63,11 @@ The current directory is the round directory. Write production code only in
 - Do not change the public Op, the manifest, the workloads, the reference, the benchmark
   or the evaluation path. For a new operator you may add its own entry under
   `src/tileops/manifest/spec/`, but do not change existing entries.
+- When the operator of the issue already has a `spec-only` entry and an Op with no
+  kernel, make exactly these changes to them: register your kernel in the Op's
+  `kernel_types` and its interface in `interfaces`, set the entry's `status` to
+  `implemented`, and register the Op in `tests/ops/test_compile_boundary.py`. The tests
+  and the benchmark skip while the Op has no kernel and run after you register it.
 - C++/CUDA that TileLang cannot generate, or that you write or rewrite by hand, goes in
   `src/tileops/csrc/`. The kernel includes it with `tileops._csrc.csrc_include(...)`, like
   the existing `fp8_gqa_helper.h`.
@@ -72,10 +78,12 @@ The current directory is the round directory. Write production code only in
 ## Where commands run
 
 You run on the host, and you read and write files locally. Each shell command goes to the
-round container automatically. `git`, `gh`, `topa` and plain file commands stay on the
-host. Everything else (python, pytest, nvcc, tilefoundry, nvidia-smi) runs in the
-container. The three directories have the same paths in the container, so use paths as
-they are. Do not write `ssh` or `docker` commands yourself.
+round container automatically. `git`, `gh`, `topa`, plain file commands and text tools
+(`grep`, `head`, `tail`, `echo`, ...) stay on the host. A line that runs anything else
+(python, pytest, nvcc, tilefoundry, nvidia-smi) runs in the container as a whole. The
+three directories have the same paths in the container, under both the written and the
+resolved spelling of a symlinked home, so use paths as they are. Do not write `ssh` or
+`docker` commands yourself.
 
 ## TileFoundry source
 
@@ -119,8 +127,8 @@ writes it.
   `issue` is the URL of the one TileFoundry issue. The `reproducer` of each finding points
   to the minimal HIR or TIR file in `work/blocked/<finding-id>/` that runs by itself. The
   same directory holds the exact command and its raw output.
-- The raw correctness, benchmark, profile and baseline evidence, and `report.md`,
-  `pr-title.txt` and `pr-body.md`.
+- The raw correctness, benchmark, profile and baseline evidence, `report.md`, and
+  `pr-template.md` filled in.
 
 When the round confirms a TileLang or ptxas fact that the next round would otherwise have
 to find again (a trap, a convention read from generated code, a form that does not exist),
@@ -143,10 +151,11 @@ the incumbent column from the Performance table. Open the PR when correctness pa
 the candidate is not slower than the baseline. If it is slower, record `no improvement`
 and open no PR.
 
-Use this form for the commit and PR title:
+Use this form for the commit title, and for the PR title on the first line of
+`pr-template.md`:
 
 ```text
-[Perf][foundry][<Scope>] <imperative description of the kernel change>
+[Perf][foundry][<Scope>] <Imperative description of the kernel change>
 ```
 
 After the commit, run `{{TOPA}} pr`.
@@ -171,68 +180,24 @@ When the TileOPs PR is open, stop and report its link (and the issue link, if th
 findings). Do not end the round yourself. The container, the worktree and this session
 stay, and you follow CI and review in this session.
 
-### Full PR template
+### PR text
 
-The public PR body has exactly these four sections:
+`pr-template.md` in the round directory is the PR. Its first line, `# <title>`, is the
+title, and the rest is the body. Fill it in where it is; `topa pr` reads the title and the
+body from it.
 
-````markdown
-## Summary
-
-- <the key change of the production kernel, and its review boundary>
-- <the public Op, fallback, output semantics or compatibility that stay the same>
-- <candidate, incumbent, external baseline, and primary workload coverage>
-
-## TileFoundry Description
-
-```python
-@module(
-    entry="<entry>",
-    target=<target>,
-    <other module arguments from final_hir.py>,
-)
-class <ModuleName>:
-    @func
-    def <entry>(<all parameters and types>) -> <full return type>:
-        <the full HIR body of final_hir.py exactly as analyzed, measured and finalized,
-         with every tf.schedule instruction choice>
-```
-
-## Performance
-
-Operator: `<exact public TileOPs Op name>`
-
-| Environment | Value |
-| --- | --- |
-| image | `<runner image>` |
-| digest | `sha256:<image digest>` |
-| gpu | `<GPU model>` |
-| driver | `<driver version>` |
-| cuda | `<CUDA version>` |
-| torch | `<PyTorch version>` |
-| tilelang | `<TileLang version/commit>` |
-| <external stack> | `<external baseline version/commit>` |
-| timer | `<timer of the TileOPs benchmark>` |
-
-Method: <the TileOPs benchmark used in this round.>
-
-Ratio in comparator columns: implementation / candidate. &#x1F7E2; > 1 means the candidate is faster;
-&#x1F534; <= 1 means it is not.
-
-| Workload | <dim 1> | <dim 2> | Dtype | TileFoundry candidate (ms) | TileOPs incumbent (ms)<br>/ candidate (omit for a new operator) | <External baseline> (ms)<br>/ candidate |
-| --- | ---: | ---: | --- | ---: | ---: | ---: |
-| <primary workload 1> | <value> | <value> | <dtype> | <candidate median> | **<incumbent median><br><marker>&nbsp;<incumbent/candidate ratio>x** | <external median><br><marker>&nbsp;<external/candidate ratio>x |
-| <one row per primary workload> | ... | ... | ... | ... | ... | ... |
-| geometric mean |  |  |  | <candidate geomean> | **<incumbent geomean><br><marker>&nbsp;<incumbent/candidate ratio>x** | <external geomean><br><marker>&nbsp;<external/candidate ratio>x |
-
-## Result And Limitations
-
-**<measured SOTA | improvement without SOTA>**
-
-- <the classification, explained with the row results and the geometric mean>
-- <the workloads still slower than the incumbent or the external baseline>
-- <specialization and fallback boundaries, and remaining risk>
-- <TileFoundry, lowering, runtime or performance limits confirmed in this round>
-````
+- Replace every `<...>` placeholder. Keep every heading, fixed line, table row name and
+  column.
+- Put `work/final_hir.py` in the TileFoundry Description block character for character.
+- For more than one public Op, repeat the block from `Operator:` to its `geometric mean`
+  row once for each Op.
+- For a new operator, delete the incumbent column: its header, its separator cell and its
+  cell in every row.
+- `topa gate` and `topa pr` check the title form, the four sections in order, that no
+  placeholder is left, the final HIR, each `Operator:` block (the environment rows, the
+  image digest, `Method:`, the ratio line, a results table with a marker in every row and a
+  `geometric mean` row), and that the bold classification line is the `classification` of
+  `provenance.json`.
 
 The public title and body do not contain correctness or reproducer commands, internal file
 names or logs, or local absolute paths. They do not claim SOTA, generality or provenance

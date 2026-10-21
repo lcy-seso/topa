@@ -67,6 +67,20 @@ def _auth(worktree_git: Path) -> tuple[list[str], list[str], tuple[object, ...]]
     return mounts, env, (worktree_git, git_config, gh_config, gh_bin, ssh_dir)
 
 
+def _spellings(*paths: Path) -> list[Path]:
+    """Each path, then its resolved form where a symlink makes the two differ.
+
+    Claude Code reports the resolved working directory, so on a host where the home
+    directory is a symlink the agent names the resolved form as often as the written one.
+    """
+    out = []
+    for path in paths:
+        out.append(path)
+        if path.resolve() != path:
+            out.append(path.resolve())
+    return out
+
+
 def proxy_env(config: Config) -> list[str]:
     """The host proxy listens on loopback; rootless Docker reaches it as `proxy_host`."""
     env = []
@@ -145,10 +159,8 @@ def start(
             "--add-host", "host.docker.internal:host-gateway",
             "--runtime=nvidia", "--ipc=host", "--shm-size=16g",
             "--publish", "127.0.0.1::22",
-            "--volume", f"{worktree}:{worktree}",
-            "--volume", f"{round_dir}:{round_dir}",
-            "--volume", f"{foundry_source}:{foundry_source}",
-            "--volume", f"{foundry_git}:{foundry_git}",
+            *[arg for host in (worktree, round_dir, foundry_source, foundry_git)
+              for path in _spellings(host) for arg in ("--volume", f"{host}:{path}")],
             "--volume", f"{foundry.stage / 'wheels'}:/opt/topa/wheels:ro",
             "--volume", f"{foundry.stage / 'build-tools'}:/opt/topa/build-tools:ro",
             "--volume", f"{tilelang_cache}:/ci-cache/tilelang",
@@ -162,7 +174,8 @@ def start(
             "--env", "GIT_OPTIONAL_LOCKS=0",
             "--env", "PYTHONUNBUFFERED=1",
             "--env", f"TILEOPS_PHYSICAL_GPU={chosen.index}",
-            "--env", f"TILEOPS_SAFE_DIRS={worktree}:{round_dir}:{foundry_source}",
+            "--env", "TILEOPS_SAFE_DIRS=" + ":".join(
+                str(path) for path in _spellings(worktree, round_dir, foundry_source)),
             "--env", "TILELANG_CACHE_DIR=/ci-cache/tilelang",
             "--env", "TILELANG_TMP_DIR=/ci-cache/tilelang/tmp",
             "--env", "TRITON_CACHE_DIR=/ci-cache/triton",

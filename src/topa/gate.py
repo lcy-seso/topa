@@ -34,6 +34,14 @@ PR_SECTIONS = (
     "Performance",
     "Result And Limitations",
 )
+# The round's PR: `kit/round/pr-template.md`, filled in. Its first line is the title.
+PR_FILE = "pr-template.md"
+# The rows of each Operator block's environment table, besides the external stack's.
+ENVIRONMENT_ROWS = ("image", "digest", "gpu", "driver", "cuda", "torch", "tilelang", "timer")
+RATIO_LINE = "Ratio in comparator columns: implementation / candidate."
+MARKERS = ("&#x1F7E2;", "&#x1F534;")
+# A template placeholder: `<...>` outside code, except the HTML tags a PR body may use.
+PLACEHOLDER = re.compile(r"<(?!/?(?:br|b|i|em|strong|code|sub|sup|details|summary)\b)[^<>\n]+>")
 
 
 def _real_text(value: object) -> bool:
@@ -151,34 +159,106 @@ def _validate_production_diff(
         raise GateError("commit messages contain an extra authorship trailer")
 
 
-def _validate_pr(round_dir: Path, final_hir: Path) -> None:
-    title = _required_file(round_dir, "pr-title.txt").read_text(
-        encoding="utf-8"
-    ).strip()
-    if not re.fullmatch(r"\[Perf\]\[foundry\]\[[A-Za-z0-9_-]+\] .+", title):
+def read_pr(round_dir: Path) -> tuple[str, str]:
+    """The title and the body of the round's PR, from its filled-in template."""
+    text = _required_file(round_dir, PR_FILE).read_text(encoding="utf-8").lstrip()
+    first, _, body = text.partition("\n")
+    if not first.startswith("# "):
+        raise GateError(f"{PR_FILE} must start with the PR title as a `# ` line")
+    return first[2:].strip(), body.strip() + "\n"
+
+
+def _sections(body: str) -> dict[str, str]:
+    parts = re.split(r"^## (.+)$", body, flags=re.MULTILINE)
+    return {name.strip(): text for name, text in zip(parts[1::2], parts[2::2])}
+
+
+def _table_rows(lines: list[str], start: int) -> list[list[str]]:
+    """The cells of the Markdown table whose header is lines[start], header first."""
+    rows = []
+    for line in lines[start:]:
+        if not line.startswith("|"):
+            break
+        rows.append([cell.strip() for cell in line.strip().strip("|").split("|")])
+    return [row for row in rows if not all(set(cell) <= set("-: ") for cell in row)]
+
+
+def _validate_operator(block: str) -> None:
+    """One `Operator:` block of the Performance section, as the template lays it out."""
+    lines = block.splitlines()
+    name = lines[0].strip()
+    if re.fullmatch(r"Operator: `[A-Za-z0-9_]+Op`", name) is None:
+        raise GateError(f"Performance needs `Operator: `<Op name>`` lines, got {name!r}")
+    try:
+        environment = _table_rows(lines, next(i for i, line in enumerate(lines)
+                                              if line.startswith("| Environment |")))
+    except StopIteration:
+        raise GateError(f"{name}: the environment table is missing") from None
+    values = {row[0]: row[1].strip("`") for row in environment[1:] if len(row) >= 2}
+    missing = [row for row in ENVIRONMENT_ROWS if row not in values]
+    if missing:
+        raise GateError(f"{name}: the environment table lacks {', '.join(missing)}")
+    if len(values) <= len(ENVIRONMENT_ROWS):
+        raise GateError(f"{name}: the environment table lacks the external stack row")
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", values["digest"]) is None:
+        raise GateError(f"{name}: the digest must be the full sha256 of the image")
+    if not any(line.startswith("Method: ") for line in lines):
+        raise GateError(f"{name}: the Method line is missing")
+    if not any(line.startswith(RATIO_LINE) for line in lines):
+        raise GateError(f"{name}: the ratio line is missing")
+    try:
+        results = _table_rows(lines, next(i for i, line in enumerate(lines)
+                                          if line.startswith("| Workload |")))
+    except StopIteration:
+        raise GateError(f"{name}: the results table is missing") from None
+    if "TileFoundry candidate (ms)" not in results[0]:
+        raise GateError(f"{name}: the results table lacks the TileFoundry candidate column")
+    if len(results) < 3 or results[-1][0] != "geometric mean":
+        raise GateError(f"{name}: the results table must end with a geometric mean row")
+    for row in results[1:]:
+        if not any(marker in cell for cell in row for marker in MARKERS):
+            raise GateError(f"{name}: results row {row[0]!r} has no comparison marker")
+
+
+def _validate_pr(round_dir: Path, final_hir: Path, classification: str) -> None:
+    title, body = read_pr(round_dir)
+    prose = re.sub(r"```.*?```", "", title + "\n" + body, flags=re.DOTALL)
+    left = PLACEHOLDER.search(prose)
+    if left:
+        raise GateError(f"{PR_FILE} still has the placeholder {left.group(0)}")
+    if not re.fullmatch(r"\[Perf\]\[foundry\]\[[A-Za-z0-9_-]+\] [A-Z`].+", title):
         raise GateError(
-            "pr-title.txt does not follow [Perf][foundry][Scope] description"
+            f"the {PR_FILE} title does not follow [Perf][foundry][Scope] Description"
         )
-    body = _required_file(round_dir, "pr-body.md").read_text(encoding="utf-8")
     headings = tuple(re.findall(r"^## (.+)$", body, flags=re.MULTILINE))
     if headings != PR_SECTIONS:
         raise GateError(
-            "pr-body.md must contain exactly the four ordered public sections"
+            f"{PR_FILE} must contain exactly the four ordered public sections"
         )
-    description = body.split("## TileFoundry Description", 1)[1].split(
-        "## Performance", 1
-    )[0]
-    match = re.search(r"```python\s*\n(.*?)\n```", description, flags=re.DOTALL)
+    sections = _sections(body)
+    match = re.search(r"```python\s*\n(.*?)\n```", sections["TileFoundry Description"],
+                      flags=re.DOTALL)
     if not match:
         raise GateError("TileFoundry Description must contain one Python HIR block")
     if match.group(1).strip() != final_hir.read_text(encoding="utf-8").strip():
         raise GateError("TileFoundry Description is not the exact final HIR")
     if "tf.schedule(" not in match.group(1):
         raise GateError("the final HIR must carry its tf.schedule instruction choices")
+    blocks = re.split(r"^(?=Operator: )", sections["Performance"], flags=re.MULTILINE)[1:]
+    if not blocks:
+        raise GateError("Performance needs one Operator block per public Op")
+    for block in blocks:
+        _validate_operator(block)
+    stated = sections["Result And Limitations"].strip().splitlines()[0].strip()
+    if stated != f"**{classification}**":
+        raise GateError(
+            f"Result And Limitations must open with **{classification}**, the "
+            "classification of provenance.json"
+        )
     if re.search(
-        r"(?:/home/|/mnt/|/tmp/|/workspace/|/Users/|file://|[A-Za-z]:\\)", body
+        r"(?:/home/|/mnt/|/tmp/|/workspace/|/Users/|file://|[A-Za-z]:\\)", title + body
     ):
-        raise GateError("pr-body.md exposes a local path")
+        raise GateError(f"{PR_FILE} exposes a local path")
 
 
 def _validate_findings(round_dir: Path) -> None:
@@ -331,5 +411,5 @@ def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD") -> d
     _required_file(round_dir, "report.md")
     _validate_findings(round_dir)
     _validate_production_diff(tileops_repo, base, head, str(production_kernel))
-    _validate_pr(round_dir, final_hir)
+    _validate_pr(round_dir, final_hir, classification)
     return provenance

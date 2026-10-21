@@ -8,8 +8,9 @@ One round is one agent working one [TileOPs](https://github.com/tile-ai/TileOPs)
 3. `topa round start <issue>` creates a TileOPs worktree and branch, a TileFoundry
    checkout, a container with one GPU, and a round directory with the brief. Then it
    starts Claude Code in a herdr pane and tells it to read the brief.
-4. The agent runs on the host. A PreToolUse hook sends each shell command that is not
-   `git`, `gh`, `topa` or a file operation into the round's container over SSH.
+4. The agent runs on the host. A PreToolUse hook sends each shell line that runs anything
+   but `git`, `gh`, `topa`, a file operation or a text tool into the round's container
+   over SSH.
 5. The agent writes HIR, analyzes and measures it with TileFoundry, writes the TileLang
    kernel, and runs `topa pr`. That command checks the evidence and opens the PR from
    your fork. TileFoundry problems it hits go into one TileFoundry issue.
