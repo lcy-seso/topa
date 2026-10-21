@@ -106,11 +106,24 @@ class HookTests(unittest.TestCase):
             round_dir = Path(folder)
             (round_dir / "round.json").write_text('{"alias": "topa-i1-r1"}')
             event = lambda command: {"tool_input": {"command": command}, "cwd": folder}
-            for command in ("git status && ls", "/x/.venv/bin/topa pr --reviewed"):
+            for command in (
+                "git status && ls",
+                "/x/.venv/bin/topa pr --reviewed",
+                'gh issue view 1 2>&1 | head -300; echo "rc=$?"',
+                'cd /x && grep -n "hir\\|iteration" gate.py | head -60',
+                "git log --oneline\ncat notes.md > /dev/null 2>&1",
+            ):
                 self.assertIsNone(decide(event(command), round_dir), command)
-            routed = decide(event("cd work && pytest -x"), round_dir)
-            assert routed is not None
-            self.assertTrue(routed["hookSpecificOutput"]["updatedInput"]["command"].startswith("ssh -T topa-i1-r1 "))
+            for command in (
+                "cd work && pytest -x",
+                "python run.py | head",
+                "ls\npython run.py",
+                "git status; nvidia-smi &",
+                "echo 'unbalanced",
+            ):
+                routed = decide(event(command), round_dir)
+                assert routed is not None, command
+                self.assertTrue(routed["hookSpecificOutput"]["updatedInput"]["command"].startswith("ssh -T topa-i1-r1 "))
 
 
 class GradeTests(unittest.TestCase):

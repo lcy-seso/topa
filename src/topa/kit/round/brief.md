@@ -72,10 +72,12 @@ The current directory is the round directory. Write production code only in
 ## Where commands run
 
 You run on the host, and you read and write files locally. Each shell command goes to the
-round container automatically. `git`, `gh`, `topa` and plain file commands stay on the
-host. Everything else (python, pytest, nvcc, tilefoundry, nvidia-smi) runs in the
-container. The three directories have the same paths in the container, so use paths as
-they are. Do not write `ssh` or `docker` commands yourself.
+round container automatically. `git`, `gh`, `topa`, plain file commands and text tools
+(`grep`, `head`, `tail`, `echo`, ...) stay on the host. A line that runs anything else
+(python, pytest, nvcc, tilefoundry, nvidia-smi) runs in the container as a whole. The
+three directories have the same paths in the container, under both the written and the
+resolved spelling of a symlinked home, so use paths as they are. Do not write `ssh` or
+`docker` commands yourself.
 
 ## TileFoundry source
 
