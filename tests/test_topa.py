@@ -17,6 +17,22 @@ HIR = 'class Operator:\n    def kernel(self, x):\n        return tf.schedule((x,
 OTHER_HIR = "class Operator:\n    def kernel(self, x):\n        return x\n"
 
 
+def filled_template(classification: str) -> str:
+    """The kit's PR template with every placeholder filled, as a round fills it."""
+    text = (kit() / "pr-template.md").read_text()
+    text = "# [Perf][foundry][Test] Schedule the kernel\n" + text.split("\n", 1)[1]
+    text = re.sub(r"<work/final_hir\.py[^\n]*>", HIR.rstrip("\n"), text)
+    for placeholder, value in {
+        "sha256:<image digest>": "sha256:" + "a" * 64,
+        "<external stack>": "fa3",
+        "<marker>": "&#x1F7E2;",
+        "**<measured SOTA | improvement without SOTA>**": f"**{classification}**",
+        "`<exact public TileOPs Op name>`": "`TestFwdOp`",
+    }.items():
+        text = text.replace(placeholder, value)
+    return gate.PLACEHOLDER.sub("1", text)
+
+
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
 
@@ -43,9 +59,7 @@ class GateTests(unittest.TestCase):
             "work/a.py": OTHER_HIR, "work/final_hir.py": HIR, "work/twin.py": "twin\n",
             "e/check.json": '{"passed": true}', "e/a.json": "{\"ok\": 1}", "e/b.json": "{\"ok\": 1}", "e/log": "ok\n",
             "report.md": "ok\n", "findings.json": '{"findings": [], "issue": null}',
-            "pr-title.txt": "[Perf][foundry][Test] Schedule the kernel\n",
-            "pr-body.md": f"## Summary\n\nx\n\n## TileFoundry Description\n\n```python\n{HIR}```\n\n"
-                          "## Performance\n\nx\n\n## Result And Limitations\n\nx\n",
+            "pr-template.md": filled_template("improvement without SOTA"),
         }
         for name, text in files.items():
             (self.round / name).parent.mkdir(parents=True, exist_ok=True)
@@ -77,6 +91,16 @@ class GateTests(unittest.TestCase):
     def test_complete_round_passes(self) -> None:
         self.assertEqual(gate.validate_round(self.round, self.repo)["classification"], "improvement without SOTA")
 
+    def pr(self, edit) -> None:
+        """Rewrite the round's filled-in PR template through *edit*."""
+        path = self.round / "pr-template.md"
+        path.write_text(edit(path.read_text()))
+
+    def test_unfilled_template_fails(self) -> None:
+        (self.round / "pr-template.md").write_text((kit() / "pr-template.md").read_text())
+        with self.assertRaisesRegex(gate.GateError, "placeholder"):
+            gate.validate_round(self.round, self.repo)
+
     def test_each_defect_fails(self) -> None:
         finding = {"id": "f", "classification": "c", "command": "c", "expected": "e", "actual": "a",
                    "workaround_cost": "w", "public_surface": "p", "affected_workloads": [], "reproducer": "e/log"}
@@ -87,6 +111,15 @@ class GateTests(unittest.TestCase):
             "null when there is no finding": lambda: (self.round / "findings.json").write_text(
                 '{"findings": [], "issue": "https://github.com/tile-ai/TileFoundry/issues/1"}'),
             "exact final HIR": lambda: (self.round / "work/final_hir.py").write_text(HIR + "# changed\n"),
+            "title as a `# ` line": lambda: self.pr(lambda t: t.split("\n", 1)[1]),
+            "placeholder <benchmark>": lambda: self.pr(lambda t: t.replace("Method: 1", "Method: <benchmark>")),
+            "Operator: `<Op name>`": lambda: self.pr(lambda t: t.replace("`TestFwdOp`", "TestFwdOp")),
+            "full sha256": lambda: self.pr(lambda t: t.replace("a" * 64, "a" * 12)),
+            "geometric mean row": lambda: self.pr(
+                lambda t: "\n".join(line for line in t.splitlines() if not line.startswith("| geometric mean"))),
+            "no comparison marker": lambda: self.pr(lambda t: t.replace("&#x1F7E2;", "")),
+            "classification of provenance.json": lambda: self.pr(
+                lambda t: t.replace("**improvement without SOTA**", "**measured SOTA**")),
             "forbidden paths": lambda: (Path(self.repo, "bench.py").write_text("x\n"),
                                         git(self.repo, "add", "."), git(self.repo, "commit", "-qm", "b")),
         }

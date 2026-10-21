@@ -6,11 +6,12 @@ The PR comes from the fork: the branch is pushed to the remote of `fork_owner`
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 from topa import ledger, sh
 from topa.config import Config
-from topa.gate import GateError, validate_round
+from topa.gate import GateError, read_pr, validate_round
 from topa.round import Round, find
 
 CHECKLIST = """
@@ -19,6 +20,7 @@ Artifact checks passed. Re-open the actual files before creating the PR:
 1. Was final_hir.py actually analyzed and measured, rather than reconstructed after tuning?
 2. Do raw analyze and measurement results justify the kept and rejected placements?
 3. Does the production diff implement that HIR decision beyond config/tile/launch tuning?
+4. Does every claim in pr-template.md match the evidence?
 
 If any answer is no or uncertain, continue the round instead of opening a PR.
 """
@@ -48,24 +50,27 @@ def open_pr(config: Config, slug: str | None = None, *, reviewed: bool = False, 
     owner = config.fork_owner or sh.gh_login()
     repo_name = config.upstream.split("/", 1)[1]
     fork = sh.github_remote(worktree, f"{owner}/{repo_name}")
-    title = (current.dir / "pr-title.txt").read_text().strip()
-    body = str(current.dir / "pr-body.md")
+    title, text = read_pr(current.dir)
     repo = ["--repo", config.upstream]
 
     sh.run(["git", "-C", worktree, "push", "--force-with-lease", "-u", fork, branch], capture=False)
     rows = sh.gh_json("pr", "list", *repo, "--head", branch, "--state", "all",
                       "--limit", "1", "--json", "number,state,url")
     existing = rows[0] if rows else None
-    if existing and existing["state"] == "OPEN":
-        sh.run(["gh", "pr", "edit", str(existing["number"]), *repo, "--title", title, "--body-file", body])
-        url = existing["url"]
-    elif existing and existing["state"] == "CLOSED":
-        sh.run(["gh", "pr", "reopen", str(existing["number"]), *repo])
-        sh.run(["gh", "pr", "edit", str(existing["number"]), *repo, "--title", title, "--body-file", body])
-        url = existing["url"]
-    else:
-        url = sh.run(["gh", "pr", "create", *repo, "--base", "main", "--head", f"{owner}:{branch}",
-                      "--title", title, "--body-file", body])
+    # gh reads the body from a file; the template's first line is the title, not body.
+    with tempfile.TemporaryDirectory() as folder:
+        body = Path(folder, "pr-body.md")
+        body.write_text(text, encoding="utf-8")
+        if existing and existing["state"] == "OPEN":
+            sh.run(["gh", "pr", "edit", str(existing["number"]), *repo, "--title", title, "--body-file", body])
+            url = existing["url"]
+        elif existing and existing["state"] == "CLOSED":
+            sh.run(["gh", "pr", "reopen", str(existing["number"]), *repo])
+            sh.run(["gh", "pr", "edit", str(existing["number"]), *repo, "--title", title, "--body-file", body])
+            url = existing["url"]
+        else:
+            url = sh.run(["gh", "pr", "create", *repo, "--base", "main", "--head", f"{owner}:{branch}",
+                          "--title", title, "--body-file", body])
     print(url)
     ledger.append("pr", round=current.slug, pr=url)
     if watch:
