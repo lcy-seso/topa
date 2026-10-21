@@ -18,8 +18,9 @@ implementation that goes around TileFoundry, and do not stop. Keep a blocking ex
 minimal reproducer exactly as it fails. Do not reduce it until it passes.**
 
 The requirement of this round is [{{UPSTREAM}}#{{ISSUE}}]({{ISSUE_URL}}), and it is the only
-source. Before you start, read its body and all comments with
-`gh issue view {{ISSUE}} --repo {{UPSTREAM}} --comments`. The goal, the acceptance line, the
+source. Before you start, read its body with `gh issue view {{ISSUE}} --repo {{UPSTREAM}}`
+and all its comments with `gh issue view {{ISSUE}} --repo {{UPSTREAM}} --comments` (without a
+terminal, `--comments` prints the comments only). The goal, the acceptance line, the
 comparison implementations and the code locations are what the issue says.
 
 | Environment | Value |
@@ -62,6 +63,11 @@ The current directory is the round directory. Write production code only in
 - Do not change the public Op, the manifest, the workloads, the reference, the benchmark
   or the evaluation path. For a new operator you may add its own entry under
   `src/tileops/manifest/spec/`, but do not change existing entries.
+- When the operator of the issue already has a `spec-only` entry and an Op with no
+  kernel, make exactly these changes to them: register your kernel in the Op's
+  `kernel_types` and its interface in `interfaces`, set the entry's `status` to
+  `implemented`, and register the Op in `tests/ops/test_compile_boundary.py`. The tests
+  and the benchmark skip while the Op has no kernel and run after you register it.
 - C++/CUDA that TileLang cannot generate, or that you write or rewrite by hand, goes in
   `src/tileops/csrc/`. The kernel includes it with `tileops._csrc.csrc_include(...)`, like
   the existing `fp8_gqa_helper.h`.
