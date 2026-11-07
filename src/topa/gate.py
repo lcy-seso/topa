@@ -18,7 +18,7 @@ class GateError(ValueError):
     """The round is missing mechanically verifiable PR evidence."""
 
 
-# What the round is measured against, and the repository's own tooling.
+# What a perf round is measured against, and the repository's own tooling.
 FORBIDDEN_ROOTS = ("benchmarks/", "workloads/", "src/tileops/manifest/", "scripts/", ".github/")
 # The round's PR, from the files of its kind in `kit/round/`, filled in: `pr-template.md` is
 # the title and a body of one Summary section, which becomes the squash commit's message;
@@ -94,13 +94,14 @@ def _git(repo: Path, *args: str, text: bool = True) -> subprocess.CompletedProce
     return process
 
 
-def _validate_production_diff(repo: Path, base: str, head: str) -> list[str]:
-    """The paths the diff changes; it must change some, none forbidden, with no authorship trailer."""
+def _validate_production_diff(repo: Path, base: str, head: str, perf: bool) -> list[str]:
+    """The paths the diff changes; it must change some, with no authorship trailer, and a perf
+    round none forbidden."""
     process = _git(repo, "diff", "--name-only", "-z", base, head, text=False)
     changed = [part.decode(errors="replace") for part in process.stdout.split(b"\0") if part]
     if not changed:
         raise GateError("base-to-head production diff is empty")
-    forbidden = [path for path in changed if path.startswith(FORBIDDEN_ROOTS)]
+    forbidden = [path for path in changed if perf and path.startswith(FORBIDDEN_ROOTS)]
     if forbidden:
         raise GateError("production diff changes forbidden paths: " + ", ".join(forbidden))
     messages = _git(repo, "log", "--format=%B", f"{base}..{head}").stdout
@@ -314,10 +315,11 @@ def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD", work
                    measured: int = 0, kind: str = "perf", issue: int | None = None) -> dict:
     """Validate only facts a program can decide without interpreting optimization quality.
 
-    Every round binds its records to the commit it ships, keeps out of the forbidden
-    paths, records its tests and reviews, and fills in its PR text. A perf round also
-    passes the TileFoundry records and the Performance table: *workloads* are the op's
-    rows behind and *measured* its count of measured rows, which the table must show.
+    Every round binds its records to the commit it ships, records its tests and reviews,
+    and fills in its PR text. A perf round also keeps out of the forbidden paths and
+    passes the TileFoundry records, the findings and the Performance table: *workloads*
+    are the op's rows behind and *measured* its count of measured rows, which the table
+    must show.
     A perf round on an issue takes its rows from `workloads` in `provenance.json`.
     """
     round_dir = round_dir.resolve()
@@ -336,8 +338,7 @@ def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD", work
     for review in _list(provenance, "reviews"):
         _required_file(round_dir, review)
     _required_file(round_dir, "report.md")
-    _validate_findings(round_dir)
-    changed = _validate_production_diff(tileops_repo, base, head)
+    changed = _validate_production_diff(tileops_repo, base, head, kind == "perf")
     _validate_pr(round_dir, kind, issue)
     if kind == "perf":
         if issue is not None:
@@ -351,7 +352,8 @@ def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD", work
 
 def _validate_perf(round_dir: Path, provenance: dict, changed: list[str], workloads: tuple[str, ...],
                    measured: int) -> None:
-    """The TileFoundry records and the PR comments of a perf round."""
+    """The TileFoundry records, the findings and the PR comments of a perf round."""
+    _validate_findings(round_dir)
     foundry_base = provenance.get("tilefoundry_base")
     if not isinstance(foundry_base, str) or re.fullmatch(r"[0-9a-f]{40}", foundry_base) is None:
         raise GateError("provenance tilefoundry_base must be the full TileFoundry commit")

@@ -20,9 +20,6 @@ The code, the PR and any issue you open are public.
 
 ## Rules
 
-- Do not change `benchmarks/`, `workloads/`, `src/tileops/manifest/`, `scripts/` or
-  `.github/`; `topa gate` rejects such a diff. A requirement that needs such a change ends
-  the round: follow [Ending without a PR](#ending-without-a-pr).
 - Do not loosen the repository's tolerances or checks, skip a case, or add test-only logic.
 - Do not branch on a shape.
 - Add no op and no compatibility shim.
@@ -105,18 +102,6 @@ Exit: the PR is open, CI passes, and every review comment is fixed or answered.
 3. Close any PR this round opened, with a comment saying why.
 4. Report the stop, and the decision of step 2 when there is one.
 
-## TileFoundry findings
-
-- Record a TileFoundry bug that blocks you as a finding.
-- Continue with the next stage the finding does not block; follow
-  [Ending without a PR](#ending-without-a-pr) when it blocks the rest of the round.
-- Keep its reproducer as it fails, with the command and raw output, in
-  `work/blocked/<finding-id>/`.
-- Before the PR or the stop report, open one issue on `tile-ai/TileFoundry` for all
-  findings, in the form `{{TILEFOUNDRY_SOURCE}}/CONTRIBUTING.md` sets.
-- Give each finding a section with its command, minimal HIR or TIR and raw output.
-- Add a later finding to the same issue. Open no issue without a finding.
-
 ## Records
 
 `{{TOPA}} gate` checks the structure of these records. Paths are relative to the round
@@ -129,10 +114,6 @@ directory. Each `command` is the exact command that wrote its non-empty `report`
   "reviews": ["evidence/review-1.md"]
 }
 ```
-
-- Write `findings.json` as `{"findings": [], "issue": null}`, or with the issue URL and per
-  finding `id`, `classification`, `command`, `expected`, `actual`, `workaround_cost`,
-  `public_surface`, `affected_workloads` and `reproducer`.
 
 ## Report
 

@@ -19,6 +19,8 @@ Optimize the op with [TileFoundry](https://github.com/tile-ai/TileFoundry) towar
 - Derive each dispatch rule from hardware and call facts, sweep it over the workloads, and
   cover it with a test.
 - Do not change the benchmark, its timing, the comparators, the workloads or the public Op.
+- Do not change `benchmarks/`, `workloads/`, `src/tileops/manifest/`, `scripts/` or
+  `.github/`; `topa gate` rejects such a diff.
 
 ## Stages
 
@@ -135,6 +137,18 @@ Title: `[Perf][foundry][<Family>] <imperative description>`.
 
 Keep every `## ` heading and every column.
 
+## TileFoundry findings
+
+- Record a TileFoundry bug that blocks you as a finding.
+- Continue with the next stage the finding does not block; follow
+  [Ending without a PR](#ending-without-a-pr) when it blocks the rest of the round.
+- Keep its reproducer as it fails, with the command and raw output, in
+  `work/blocked/<finding-id>/`.
+- Before the PR or the stop report, open one issue on `tile-ai/TileFoundry` for all
+  findings, in the form `{{TILEFOUNDRY_SOURCE}}/CONTRIBUTING.md` sets.
+- Give each finding a section with its command, minimal HIR or TIR and raw output.
+- Add a later finding to the same issue. Open no issue without a finding.
+
 ## Perf records
 
 `provenance.json` also holds these fields. Each `<tilefoundry command>` starts with
@@ -156,3 +170,6 @@ Keep every `## ` heading and every column.
 ```
 
 - Give `floor` one entry per workload, and `placements` at least two, exactly one chosen.
+- Write `findings.json` as `{"findings": [], "issue": null}`, or with the issue URL and per
+  finding `id`, `classification`, `command`, `expected`, `actual`, `workaround_cost`,
+  `public_surface`, `affected_workloads` and `reproducer`.

@@ -47,6 +47,6 @@ is the requirement, and the start assigns the issue to you.
 | starts with `[Perf]` | the seven stages and the bar above, on the workloads the issue lists | `Refs #N`; the nightly confirms the result |
 | anything else | understand, write a failing test, implement, verify, review, clean up, PR | `Closes #N` |
 
-`topa gate` runs the shared checks on every round: the commit binding, the forbidden paths,
-the recorded tests and reviews, and the PR text. Only a perf round has the Performance
-table and the TileFoundry records checked.
+`topa gate` runs the shared checks on every round: the commit binding, the recorded tests
+and reviews, and the PR text. Only a perf round has the forbidden paths, the Performance
+table, the TileFoundry records and `findings.json` checked.

@@ -122,7 +122,14 @@ class GateTests(unittest.TestCase):
         self.assertEqual(self.validate()["result"], "bar met")
 
     def test_general_round_skips_the_perf_checks(self) -> None:
-        (self.round / "work/final_hir.py").unlink()
+        """No perf record, no findings.json, and a change under a forbidden path."""
+        for name in ("work/final_hir.py", "findings.json"):
+            (self.round / name).unlink()
+        Path(self.repo, "benchmarks").mkdir()
+        Path(self.repo, "benchmarks/b.py").write_text("x\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "b")
+        self.provenance["candidate_commit"] = git(self.repo, "rev-parse", "HEAD")
         body = filled("pr-template.md", kind="general") + "\nCloses #7\n"
         (self.round / "pr-template.md").write_text(body)
         (self.round / "pr-comments.md").write_text(filled("pr-comments.md", kind="general"))
