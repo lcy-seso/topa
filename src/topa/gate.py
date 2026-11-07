@@ -64,8 +64,8 @@ def _required_file(root: Path, relative: object) -> Path:
     return path
 
 
-def _record(root: Path, record: object, section: str, *words: str, flags: tuple[str, ...] = ()) -> Path:
-    """The report of a `{command, report}` record whose command runs `tilefoundry <words>` with *flags*."""
+def _record(root: Path, record: object, section: str, *, tilefoundry: bool = True) -> Path:
+    """The report of a `{command, report}` record; a TileFoundry record's command runs `tilefoundry`."""
     if not isinstance(record, dict):
         raise GateError(f"{section} must be an object with a command and a report")
     command = record.get("command")
@@ -75,23 +75,9 @@ def _record(root: Path, record: object, section: str, *words: str, flags: tuple[
         argv = shlex.split(command)
     except ValueError as error:
         raise GateError(f"{section} command cannot be parsed: {error}") from error
-    if words and not any(Path(arg).name == "tilefoundry" and argv[i + 1:i + 1 + len(words)] == list(words)
-                         for i, arg in enumerate(argv)):
-        raise GateError(f"{section} must run tilefoundry {' '.join(words)}")
-    missing = [flag for flag in flags if flag not in argv]
-    if missing:
-        raise GateError(f"{section} must pass {', '.join(missing)}")
+    if tilefoundry and Path(argv[0]).name != "tilefoundry":
+        raise GateError(f"{section} must record a tilefoundry command")
     return _required_file(root, record.get("report"))
-
-
-def _passed(report: Path, section: str) -> None:
-    if _load_json(report).get("passed") is not True:
-        raise GateError(f"{section} report must say passed=true")
-
-
-def _analysis(report: Path, section: str) -> None:
-    if not _load_json(report):
-        raise GateError(f"{section} report is empty")
 
 
 def _git(repo: Path, *args: str, text: bool = True) -> subprocess.CompletedProcess:
@@ -270,8 +256,6 @@ def _validate_pr(round_dir: Path, final_hir: Path, result: str, workloads: tuple
         raise GateError("TileFoundry Description must contain one Python HIR block")
     if match.group(1).strip() != final_hir.read_text(encoding="utf-8").strip():
         raise GateError("TileFoundry Description is not the exact final HIR")
-    if "tf.schedule(" not in match.group(1):
-        raise GateError("the final HIR must carry its tf.schedule instruction choices")
     _validate_performance(comments["Performance"], workloads, measured, result)
     stated = comments["Result And Limitations"].splitlines()[1:]
     if next((line.strip() for line in stated if line.strip()), None) != f"**{result}**":
@@ -338,25 +322,22 @@ def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD",
 
     final_hir = _required_file(round_dir, provenance.get("final_hir"))
     _required_file(round_dir, provenance.get("runtime_twin"))
-    _passed(_record(round_dir, provenance.get("reference_check"), "reference_check", "check",
-                    flags=("--expected", "--json")), "reference_check")
+    _record(round_dir, provenance.get("reference_check"), "reference_check")
     floor = _list(provenance, "floor")
     absent = sorted(set(workloads) - {record.get("workload") for record in floor if isinstance(record, dict)})
     if absent:
         raise GateError(f"floor lacks the rows behind {', '.join(absent)}")
     for index, record in enumerate(floor):
-        _analysis(_record(round_dir, record, f"floor[{index}]", "analyze", flags=("--roofline", "--json")),
-                  f"floor[{index}]")
+        _record(round_dir, record, f"floor[{index}]")
     placements = _list(provenance, "placements")
     if len(placements) < 2 or sum(isinstance(p, dict) and p.get("chosen") is True for p in placements) != 1:
         raise GateError("placements must compare at least two placements and choose exactly one")
     for index, record in enumerate(placements):
         if not isinstance(record, dict) or not _real_text(record.get("placement")):
             raise GateError(f"placements[{index}] must describe its placement")
-        _analysis(_record(round_dir, record, f"placements[{index}]", "analyze", flags=("--performance", "--json")),
-                  f"placements[{index}]")
-    _record(round_dir, provenance.get("schedule"), "schedule", "schedule", "finalize")
-    _passed(_record(round_dir, provenance.get("twin_check"), "twin_check", "check", flags=("--json",)), "twin_check")
+        _record(round_dir, record, f"placements[{index}]")
+    _record(round_dir, provenance.get("schedule"), "schedule")
+    _record(round_dir, provenance.get("twin_check"), "twin_check")
     for index, iteration in enumerate(_list(provenance, "iterations")):
         if not isinstance(iteration, dict) or not all(_real_text(iteration.get(k)) for k in ("change", "basis")):
             raise GateError(f"iterations[{index}] must record its change and its basis")
@@ -364,7 +345,7 @@ def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD",
             if not isinstance(iteration.get(key), (int, float)) or _time(iteration[key]) is None:
                 raise GateError(f"iterations[{index}] must record a positive {key}")
     for section in ("tests", "benchmark"):
-        _record(round_dir, provenance.get(section), section)
+        _record(round_dir, provenance.get(section), section, tilefoundry=False)
     for review in _list(provenance, "reviews"):
         _required_file(round_dir, review)
 

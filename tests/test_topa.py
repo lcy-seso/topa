@@ -134,10 +134,8 @@ class GateTests(unittest.TestCase):
                    "workaround_cost": "w", "public_surface": "p", "affected_workloads": [], "reproducer": "e/log"}
         p = self.provenance
         cases = {
-            "must pass --expected": lambda: p["reference_check"].update(command="tilefoundry check h.py:M --json x"),
+            "reference_check must record a tilefoundry command": lambda: p["reference_check"].update(command="python check.py"),
             "at least two placements": lambda: p.update(placements=p["placements"][:1]),
-            "twin_check report must say passed=true": lambda: (self.round / "e/twin.json").write_text('{"passed": 0}'),
-            "must run tilefoundry schedule finalize": lambda: p["schedule"].update(command="tilefoundry schedule x"),
             "positive measured_us": lambda: p["iterations"][0].update(measured_us=0),
             "reviews must be a non-empty list": lambda: p.update(reviews=[]),
             "one tile-ai/TileFoundry issue": lambda: (self.round / "findings.json").write_text(

@@ -14,8 +14,8 @@ its fastest comparator:
    container over SSH.
 4. The agent follows the brief's seven stages: classify the comparators; check an HIR
    reference against authoritative outputs; take the floor and choose a placement with
-   `tilefoundry analyze`; implement in rounds through `tilefoundry schedule`, measuring
-   main and the candidate alternately; have Codex review the diff; clean up and verify
+   TileFoundry; implement in rounds whose schedule TileFoundry derives, measuring main
+   and the candidate alternately; have Codex review the diff; clean up and verify
    again; open the PR with `topa pr`. That command checks the evidence, opens the PR from
    your fork, and posts the evidence as four comments. TileFoundry problems the agent hits
    go into one TileFoundry issue.

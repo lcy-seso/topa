@@ -1,19 +1,19 @@
 ## TileFoundry Description
 
-- **Floor.** `analyze --compute-cost --memory --roofline` of the whole op: <workload> <floor> us (<bound-by>-bound); <one entry per workload>
-- **Placement.** `analyze --memory --performance` of <placement>: <what the waves, storage use and predicted time show>
+- **Floor.** TileFoundry's floor of the whole op: <workload> <floor> us (<bound>-bound); <one entry per workload>
+- **Placement.** TileFoundry's analysis of <placement>: <what the waves, storage use and predicted time show>
 
 | Workload | Placement | Waves | Predicted (us) | Floor (us) | Shipped |
 | --- | --- | ---: | ---: | ---: | --- |
 | <workload> | <placement> | <waves> | <predicted> | <floor> | <yes or no> |
 
-Floor and predicted times are the reports' `ideal-ns` and `predicted-ns`, in microseconds.
+Floor and predicted times are TileFoundry's, in microseconds.
 Analysis: tilefoundry `<version>`, `<target>`. `run.sh` below reproduces every number.
 
 <details><summary><code>final_hir.py</code>: final HIR program</summary>
 
 ```python
-<work/final_hir.py, character for character: the HIR that was analyzed, measured and finalized, with every tf.schedule instruction choice>
+<work/final_hir.py, character for character: the HIR that was analyzed, measured and finalized, with every schedule choice>
 ```
 
 </details>
@@ -21,7 +21,7 @@ Analysis: tilefoundry `<version>`, `<target>`. `run.sh` below reproduces every n
 <details><summary><code>run.sh</code>: every analysis above</summary>
 
 ```bash
-<a script that runs every analyze above and prints each number of the tables>
+<a script that runs every analysis above and prints each number of the tables>
 ```
 
 </details>
@@ -58,7 +58,7 @@ Other ops that share a changed kernel:
 
 | Workload | candidate / floor | Located cause | Evidence |
 | --- | ---: | --- | --- |
-| <workload> | <ratio> | <cause> | <ncu or analyze data> |
+| <workload> | <ratio> | <cause> | <ncu or TileFoundry data> |
 
 - <rows below the bar, comparator pairs that are not comparable, and unsupported shapes>
 - <directions measured without gain, and their results>
@@ -69,7 +69,7 @@ Other ops that share a changed kernel:
 
 | Decision | Basis | Outcome |
 | --- | --- | --- |
-| <decision> | <analyze number or hardware fact> | <measured outcome> |
+| <decision> | <TileFoundry number or hardware fact> | <measured outcome> |
 
 **Prediction against measurement**
 

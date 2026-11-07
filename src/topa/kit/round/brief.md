@@ -34,8 +34,7 @@ run [{{NIGHTLY_RUN}}]({{NIGHTLY_RUN_URL}}), commit `{{NIGHTLY_COMMIT}}`, benchma
 | none | Neither, or a person must decide. | Follow [Ending without a PR](#ending-without-a-pr). |
 
 - "Any op" includes every op that shares a kernel the round changes.
-- `topa gate` checks this rule on the medians of the Performance table; stage 5 checks the
-  repeats.
+- `topa gate` checks this rule on the Performance medians; stage 5 checks the repeats.
 
 ## Rules
 
@@ -65,10 +64,10 @@ run [{{NIGHTLY_RUN}}]({{NIGHTLY_RUN_URL}}), commit `{{NIGHTLY_COMMIT}}`, benchma
 
 ## Stages
 
-- Read every page of `tilefoundry tutorial` before stage 1.
-- Read `{{KNOWLEDGE}}` before stage 3.
-- Resolve TileFoundry usage questions with `tilefoundry tutorial`, `spec` and `--help`.
-- Cite `tilefoundry --version` and the target name with every analysis number.
+- Find TileFoundry's commands with `tilefoundry --help`, each subcommand's `--help`,
+  `tilefoundry tutorial` and `tilefoundry spec`, never from memory.
+- Read every tutorial page before stage 1, and `{{KNOWLEDGE}}` before stage 3.
+- Cite `tilefoundry --version` and the target with every analysis number.
 
 ### 1. Requirement and comparators
 
@@ -91,29 +90,26 @@ none, follow [Ending without a PR](#ending-without-a-pr).
 
 ### 2. HIR reference
 
-1. Write the op's math in HIR, one module per workload or with `--dim`.
-2. Save the repository reference's outputs on the same inputs as `.pt`.
-3. Run `tilefoundry check <hir>.py:<Module> --inputs files:<in> --expected <out> --json <report>`
-   with a two-sided `--fn` and `nan_inf` per output.
-4. Add `--weights ckpt:<dir>` for `ConstTensor` weights.
-5. Derive each `check` tolerance from the dtype and the serial roundings.
-6. Record each derivation; never loosen a tolerance for a single workload.
+1. Write the op's math in HIR.
+2. Check it with TileFoundry against the repository reference's outputs on the same inputs,
+   on every output of every workload.
+3. Derive each tolerance of that check from the dtype and the serial roundings, and record
+   the derivation. Never loosen one for a single workload.
 
-Exit: the check passes on every output of every workload.
+Exit: the HIR matches the reference on every output of every workload.
 
 ### 3. Floor and placement
 
-1. Run `tilefoundry analyze <hir>.py:<Module> <report> --compute-cost --memory --roofline --json`
-   per workload; `ideal-ns` and `bound-by` are its floor.
-2. Record each workload's DRAM floor: the bytes it must move over the DRAM bandwidth that
-   `tilefoundry target show` gives.
+1. Establish each workload's floor and bottleneck with TileFoundry's analysis.
+2. Record each workload's DRAM floor: the bytes it must move over the target's DRAM
+   bandwidth.
 3. Check the flops and traffic by hand: each input read once, each output written once.
-4. Where the hand count and the report disagree, find which is wrong: fix the HIR or the
-   count, or record a TileFoundry finding.
+4. Where the hand count and the analysis disagree, fix the HIR or the count, or record a
+   TileFoundry finding.
 5. List placements, including the incumbent's and the fastest comparator's, read from `ncu`
-   and, where it exists, the comparator's generated source. Record what cannot be read.
-6. Run `analyze ... --memory --performance --json` on each placement.
-7. Choose one by waves, storage use and predicted time, and record why.
+   and, where it exists, the comparator's generated source.
+6. Compare the placements' predicted time, waves and storage with TileFoundry, choose one,
+   and record why.
 
 Exit: every workload has a checked floor, and the chosen placement has a recorded reason.
 
@@ -121,42 +117,38 @@ Exit: every workload has a checked floor, and the chosen placement has a recorde
 
 Run each round in this order, and add it to `iterations` in `provenance.json`:
 
-1. Change the HIR's placement or schedule.
-2. Run the stage 3 `analyze ... --memory --performance --json` on the changed placement.
-   Continue if it predicts less time than the current kernel's placement on
-   the targeted rows. Otherwise continue only with a named effect HIR cannot express and
-   the measurement that would show it.
-3. Run `tilefoundry schedule candidates`.
-4. Run `tilefoundry schedule facts --target <target> <instruction>` for each candidate you
-   consider.
-5. Write the choices into `tf.schedule`.
-6. Run `tilefoundry schedule finalize` and write the TileLang kernel from its TIR.
-7. Re-run the stage 2 check if the math, outputs or shapes changed.
-8. Run `tilefoundry check <twin>.py:<Twin> --json <report>` on the runtime twin, which calls
-   the production kernel.
-9. Run the tests of `{{OP}}` and of every op that shares a changed kernel.
-10. Measure (rules below).
-11. Record measured / floor, measured / predicted and comparator / measured.
-12. Record the cause of a prediction error, or that it is unresolved, in TileFoundry
-    Findings.
+1. Change the HIR's placement or schedule, and predict its time with TileFoundry.
+2. Continue if the prediction beats the current kernel's placement on the targeted rows.
+   Otherwise continue only with a named effect HIR cannot express and the measurement that
+   would show it.
+3. Derive the schedule (instructions, buffer depths, layouts) with TileFoundry, and lower
+   it to TIR.
+4. Write the TileLang kernel from that TIR.
+5. Recheck the HIR against the reference if the math, outputs or shapes changed.
+6. Check with TileFoundry that the runtime twin, which calls the production kernel, matches
+   the HIR.
+7. Run the tests of `{{OP}}` and of every op that shares a changed kernel.
+8. Measure (rules below), and record measured / floor, measured / predicted and
+   comparator / measured.
+9. Record the cause of a prediction error, or that it is unresolved, in TileFoundry
+   Findings.
 
 Measure this way:
 
 - Snapshot the base and each candidate commit with
   `git -C {{TILEOPS_WORKTREE}} worktree add --detach {{ROUND_DIR}}/work/<name> <commit>`.
 - Time each snapshot with its `src` first on `PYTHONPATH`.
-- Alternate main, candidate and comparators on the round's GPU, with the L2 flush.
-- Run at least three repeats; a repeat is one alternating cycle of main, candidate and
-  comparators.
+- Run at least three repeats; a repeat is one cycle of main, candidate and comparators on
+  the round's GPU, with the L2 flush.
 - Keep each repeat's timings, and report the median of `device_busy_ms`.
 
 Exit: the bar is met. Otherwise, exit when all three stop records hold:
 
 | Record | Holds when |
 | --- | --- |
-| (1) Gap attribution | Each workload's measured / floor is listed, and each gap is tied to a bottleneck with `ncu` or `analyze` data. |
+| (1) Gap attribution | Each workload's measured / floor is listed, and each gap is tied to a bottleneck with `ncu` or TileFoundry data. |
 | (2) Directions exhausted | Each direction on the recorded list for each bottleneck was measured or shown infeasible. |
-| (3) TileFoundry consulted | Alternative placements were analyzed, `tutorial optimize` and the `spec` pages of each bottleneck were read, and each direction they gave is on the list. |
+| (3) TileFoundry consulted | Alternative placements were compared, the tutorial and spec pages on each bottleneck were read, and each direction they gave is on the list. |
 
 ### 5. Review
 
@@ -168,12 +160,10 @@ Exit: the bar is met. Otherwise, exit when all three stop records hold:
 
 2. Give it the diff against the current `tileops_base`, this brief, the rows, the
    Performance table with its raw timings, the timer resolution and the floors, and the
-   paths of TileOPs `docs/design/` and `docs/code-style.md`. Withhold your
-   self-review and how you would settle its findings.
-3. Ask for correctness (edge shapes, dtypes, tails), the real call path, branch coverage by
-   tests, the comparator classes, ties claimed under the bar, regressions against main,
-   and hotfixes: a loosened tolerance or check, a skipped case, logic only tests reach, or
-   a shape branch.
+   paths of TileOPs `docs/design/` and `docs/code-style.md`. Withhold your self-review.
+3. Ask for correctness (edge shapes, dtypes, tails), the real call path, branch coverage,
+   the comparator classes, claimed ties, regressions against main, and hotfixes (a loosened
+   tolerance or check, a skipped case, test-only logic, a shape branch).
 4. Fix each finding you agree with.
 5. Answer each other finding with a test, a measurement or a rule.
 6. Rerun Codex on the revised diff. Rerun a review that ends in an error.
@@ -211,17 +201,16 @@ Exit: the verification passes, and the result of the bar is unchanged.
 | `pr-template.md` | the title (line 1, same as the commit) and the body | Summary, Test plan, Test node delta (`scripts/test_node_delta.py` output and the path each new case guards), Benchmark |
 | `pr-comments.md` | one comment per `## ` section | TileFoundry Description with `work/final_hir.py` verbatim; Performance with one row per measured workload of `{{OP}}`, and the other ops that share a changed kernel (delete that table when there are none); Result And Limitations opening with the result; TileFoundry Findings |
 
-9. Replace every `<...>`.
-10. Keep every `## ` heading and every column.
-11. Leave out of the PR body and comments: local paths, raw logs, and the order things
+9. Replace every `<...>`; keep every `## ` heading and every column.
+10. Leave out of the PR body and comments: local paths, raw logs, and the order things
     were tried.
-12. Run `{{TOPA}} pr`.
-13. Re-read the final HIR, the evidence and the diff.
-14. Run `{{TOPA}} pr --reviewed`. Never use `gh pr create`, `gh pr edit` or merge.
-15. Report the PR link.
-16. Fix each CI failure and each review comment you agree with in this session.
-17. Answer each other review comment with a test, a measurement or a rule.
-18. After a fix or a base move, repeat steps 1-14.
+11. Run `{{TOPA}} pr`.
+12. Re-read the final HIR, the evidence and the diff.
+13. Run `{{TOPA}} pr --reviewed`. Never use `gh pr create`, `gh pr edit` or merge.
+14. Report the PR link.
+15. Fix each CI failure and each review comment you agree with in this session.
+16. Answer each other review comment with a test, a measurement or a rule.
+17. After a fix or a base move, repeat steps 1-13.
 
 Exit: the PR is open, CI passes, and every review comment is fixed or answered.
 
@@ -249,8 +238,9 @@ Exit: the PR is open, CI passes, and every review comment is fixed or answered.
 
 ## Records
 
-`{{TOPA}} gate` checks the structure of these records. Paths are relative to the round directory; each `command` is
-the exact command that wrote its non-empty `report`.
+`{{TOPA}} gate` checks the structure of these records. Paths are relative to the round
+directory. Each `command` is the exact command that wrote its non-empty `report`; a
+`<tilefoundry command>` starts with `tilefoundry`.
 
 ```json
 {
@@ -258,19 +248,18 @@ the exact command that wrote its non-empty `report`.
   "result": "bar met | below bar",
   "final_hir": "work/final_hir.py", "runtime_twin": "work/runtime_twin.py",
   "production_kernel": "src/tileops/<path>.py:<Symbol>",
-  "reference_check": {"command": "tilefoundry check ... --expected ... --json <r>", "report": "<r>"},
-  "floor": [{"workload": "<name>", "command": "tilefoundry analyze ... --roofline --json", "report": "<r>"}],
-  "placements": [{"placement": "<tiling>", "chosen": true, "command": "tilefoundry analyze ... --performance --json", "report": "<r>"}],
-  "schedule": {"command": "tilefoundry schedule finalize ...", "report": "<tir>"},
-  "twin_check": {"command": "tilefoundry check work/runtime_twin.py:<Twin> ... --json <r>", "report": "<r>"},
+  "reference_check": {"command": "<tilefoundry command>", "report": "<r>"},
+  "floor": [{"workload": "<name>", "command": "<tilefoundry command>", "report": "<r>"}],
+  "placements": [{"placement": "<tiling>", "chosen": true, "command": "<tilefoundry command>", "report": "<r>"}],
+  "schedule": {"command": "<tilefoundry command>", "report": "<the TIR>"},
+  "twin_check": {"command": "<tilefoundry command>", "report": "<r>"},
   "iterations": [{"change": "<what>", "basis": "<fact>", "predicted_us": 0.0, "measured_us": 0.0}],
   "tests": {"command": "<pytest>", "report": "<r>"}, "benchmark": {"command": "<bench>", "report": "<r>"},
   "reviews": ["evidence/review-1.md"]
 }
 ```
 
-- Give `floor` one entry per workload.
-- Give `placements` at least two entries, exactly one chosen.
+- Give `floor` one entry per workload, and `placements` at least two, exactly one chosen.
 - Write `findings.json` as `{"findings": [], "issue": null}`, or with the issue URL and per
   finding `id`, `classification`, `command`, `expected`, `actual`, `workaround_cost`,
   `public_surface`, `affected_workloads` and `reproducer`.
