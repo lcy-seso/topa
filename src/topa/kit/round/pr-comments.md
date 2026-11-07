@@ -35,6 +35,7 @@ Analysis: tilefoundry `<version>`, `<target>`. `run.sh` below reproduces every n
 | gpu | `<GPU model>, driver <version>, CUDA <version>` |
 | torch / tilelang | `<PyTorch version> / <TileLang version>` |
 | timer | `<timer of the TileOPs benchmark>` |
+| timer step (us) | <the timer's resolution in microseconds> |
 
 Method: <how main, the candidate and the comparators were alternated on one GPU, and how many runs give each median>. Every comparator counted toward the bar passes the case reference before timing. Times are `device_busy_ms`. Ratio: comparator / candidate.
 

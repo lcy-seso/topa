@@ -27,12 +27,9 @@ COMMENTS_FILE = "pr-comments.md"
 BODY_SECTIONS = ("Summary", "Test plan", "Test node delta", "Benchmark")
 COMMENT_SECTIONS = ("TileFoundry Description", "Performance", "Result And Limitations", "TileFoundry Findings")
 RESULTS = ("bar met", "below bar")
-# The Perf Tracker's line for a row behind. The gate holds `bar met` to it; whether a row
-# near it ties within a timer step or at the floor is for the review to judge.
-BEHIND = 0.99
 # How far a stated ratio may sit from the one its rounded times give.
 RATIO_ROUNDING = 0.01
-ENVIRONMENT_ROWS = ("image", "digest", "gpu", "timer")
+ENVIRONMENT_ROWS = ("image", "digest", "gpu", "timer", "timer step (us)")
 # A template placeholder: `<...>` outside code, except the HTML tags a PR may use; or a
 # code block whose only line is one.
 PLACEHOLDER = re.compile(r"<(?!/?(?:br|b|i|em|strong|code|sub|sup|details|summary)\b)[^<>\n]+>")
@@ -195,9 +192,9 @@ def _not_slower(table: list[list[str]], label: str) -> set[str]:
 def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, result: str) -> None:
     """The environment, the method, one row per workload of the op, and no row slower than main.
 
-    The op's own table holds the bar: `bar met` has no ratio below `BEHIND`, and `below bar`
-    beats main on a row behind. Other ops that share a changed kernel only must not be
-    slower than main.
+    The op's own table holds the bar: under `bar met` each row beats its comparator or ties
+    it, or the floor, within one timer step; under `below bar` some row beats main. Other
+    ops that share a changed kernel only must not be slower than main.
     """
     lines = text.splitlines()
     values = {row[0]: row[1].strip("`") for row in _table(lines, "| Environment |")[1:] if len(row) >= 2}
@@ -206,11 +203,14 @@ def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, 
         raise GateError(f"Performance: the environment table lacks {', '.join(missing)}")
     if re.fullmatch(r"sha256:[0-9a-f]{64}", values["digest"]) is None:
         raise GateError("Performance: the digest must be the full sha256 of the image")
+    step = _time(values["timer step (us)"])
+    if step is None:
+        raise GateError("Performance: the timer step must be a positive number of microseconds")
     if not any(line.startswith("Method: ") for line in lines):
         raise GateError("Performance: the Method line is missing")
     results = _table(lines, "| Workload |")
-    if not results or not {"main (us)", "candidate (us)", "ratio"} <= set(results[0]):
-        raise GateError("Performance: the results table needs main (us), candidate (us) and ratio columns")
+    if not results or not {"main (us)", "candidate (us)", "floor (us)", "ratio"} <= set(results[0]):
+        raise GateError("Performance: the results table needs main (us), candidate (us), floor (us) and ratio columns")
     faster = _not_slower(results, 0)
     others = _table(lines, "| Op | Workload |")
     if others and not {"main (us)", "candidate (us)"} <= set(others[0]):
@@ -224,21 +224,26 @@ def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, 
     if absent:
         raise GateError(f"Performance: the results table lacks the rows behind {', '.join(absent)}")
     # Each ratio column follows its comparator's time column.
-    candidate = results[0].index("candidate (us)")
+    candidate, floor = results[0].index("candidate (us)"), results[0].index("floor (us)")
     ratios = [i for i, name in enumerate(results[0]) if name == "ratio"]
     for row in results[1:]:
         name = row[0].strip("`")
+        ours, least = _time(row[candidate]), _time(row[floor]) if floor < len(row) else None
+        if least is None:
+            raise GateError(f"Performance: row {name!r} needs a positive floor")
         for i in ratios:
             comparator, stated = (_time(row[j]) if j < len(row) else None for j in (i - 1, i))
             if comparator is None or stated is None:
                 raise GateError(f"Performance: row {name!r} needs a positive comparator time and ratio")
-            ratio = comparator / _time(row[candidate])
-            if abs(stated - ratio) > RATIO_ROUNDING:
-                raise GateError(f"Performance: row {name!r} states ratio {stated}, its times give {ratio:.4f}")
-            if result == "bar met" and ratio < BEHIND:
-                raise GateError(f"Performance: row {name!r} is behind its comparator, so the bar is not met")
-    if result == "below bar" and not faster & (set(workloads) or seen):
-        raise GateError("Performance: a below bar result must beat main on a row behind")
+            if abs(stated - comparator / ours) > RATIO_ROUNDING:
+                raise GateError(f"Performance: row {name!r} states ratio {stated}, "
+                                f"its times give {comparator / ours:.4f}")
+            # Rounded to the nanosecond, so a gap of exactly one step is a tie.
+            if result == "bar met" and round(ours - max(comparator, least), 3) > step:
+                raise GateError(f"Performance: row {name!r} is more than one timer step behind its "
+                                "comparator and the floor, so the bar is not met")
+    if result == "below bar" and not faster & seen:
+        raise GateError("Performance: a below bar result must beat main on a row")
 
 
 def _validate_pr(round_dir: Path, final_hir: Path, result: str, workloads: tuple[str, ...], measured: int) -> None:

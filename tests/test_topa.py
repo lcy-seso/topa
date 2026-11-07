@@ -110,6 +110,11 @@ class GateTests(unittest.TestCase):
         path = self.round / name
         path.write_text(change(path.read_text()))
 
+    def test_tie_within_a_timer_step_meets_the_bar(self) -> None:
+        self.edit("pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 2 | 1.02 | 0.5 | 1 | 1 | 0.98 |")
+                  .replace("| timer step (us) | 1 |", "| timer step (us) | 0.02 |"))
+        self.assertEqual(self.validate()["result"], "bar met")
+
     def test_unfilled_template_fails(self) -> None:
         for name in ("pr-template.md", "pr-comments.md"):
             with self.subTest(name):
@@ -150,8 +155,11 @@ class GateTests(unittest.TestCase):
                 "pr-comments.md", lambda t: t.replace("**bar met**", "**below bar**")),
             "below bar result must beat main": lambda: (p.update(result="below bar"), self.edit(
                 "pr-comments.md", lambda t: t.replace("**bar met**", "**below bar**"))),
-            "behind its comparator": lambda: self.edit(
-                "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 1 | 1 | 1 | 1 | 0.5 | 0.5 |")),
+            "more than one timer step behind": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 1 | 1 | 0.5 | 1 | 0.5 | 0.5 |")
+                .replace("| timer step (us) | 1 |", "| timer step (us) | 0.02 |")),
+            "timer step must be a positive": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("| timer step (us) | 1 |", "| timer step (us) | x |")),
             "states ratio 1.0, its times give 0.5000": lambda: self.edit(
                 "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 1 | 1 | 1 | 1 | 0.5 | 1 |")),
             "other-ops table needs": lambda: self.edit(

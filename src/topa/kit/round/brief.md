@@ -30,11 +30,12 @@ run [{{NIGHTLY_RUN}}]({{NIGHTLY_RUN_URL}}), commit `{{NIGHTLY_COMMIT}}`, benchma
 | Result | When | Do |
 | --- | --- | --- |
 | `bar met` | Every row of `{{OP}}`, behind or not, beats its fastest comparable comparator in the median and in every repeat, or ties it within one timer step or at the DRAM floor; no row of any op is slower than main. | Open the PR. |
-| `below bar` | The bar is not met, the candidate beats main on a row behind, and no row of any op is slower than main. | Open the PR; list the unmet rows in Result And Limitations. |
+| `below bar` | The bar is not met, the candidate beats main on a row of `{{OP}}`, and no row of any op is slower than main. | Open the PR; list the unmet rows in Result And Limitations. |
 | none | Neither, or a person must decide. | Follow [Ending without a PR](#ending-without-a-pr). |
 
 - "Any op" includes every op that shares a kernel the round changes.
-- `topa gate` rejects `bar met` with a ratio below 0.99; the review judges ties above it.
+- `topa gate` checks a tie from the Performance table: the candidate within the timer step
+  of the comparator or of the floor. The review checks every repeat.
 
 ## Rules
 
@@ -192,7 +193,7 @@ Exit: the verification passes, and the result of the bar is unchanged.
 1. Rebase onto the newest `{{UPSTREAM}}` main.
 2. Title the commit `[Perf][foundry][<Family>] <imperative description>`, with no
    authorship trailer.
-3. Run the stage 6 verification.
+3. Run stage 6 steps 4-6.
 4. Measure main and the candidate again, and set the result.
 5. Set `tileops_base` to the new base and `candidate_commit` to HEAD in `provenance.json`.
 6. Fill in `pr-template.md` and `pr-comments.md` where they are:
@@ -209,9 +210,10 @@ Exit: the verification passes, and the result of the bar is unchanged.
 11. Re-read the final HIR, the evidence and the diff.
 12. Run `{{TOPA}} pr --reviewed`. Never use `gh pr create`, `gh pr edit` or merge.
 13. Report the PR link.
-14. Fix each CI failure and answer each review comment in this session, then repeat steps
-    3-12.
-15. After a base move, repeat steps 1-12.
+14. Fix each CI failure and each review comment you agree with in this session.
+15. Answer each other review comment with a test, a measurement or a rule.
+16. Run stage 5 again when a fix or a rebase changes kernel logic, dispatch, tests or a
+    performance number; then repeat steps 1-12.
 
 Exit: the PR is open and its link is reported.
 
@@ -223,7 +225,7 @@ Exit: the PR is open and its link is reported.
 2. When a disputed finding or a missing comparator stopped the round, write the decision
    a person must make and the evidence on each side.
 3. Close any PR this round opened, with a comment saying why.
-4. Report the stop and the decision it waits for.
+4. Report the stop, and the decision of step 2 when there is one.
 
 ## TileFoundry findings
 
