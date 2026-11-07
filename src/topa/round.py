@@ -227,7 +227,7 @@ def start(config: Config, name: str, *, page: wiki.Page | None = None, dry_run: 
         worktree = config.worktree_root / f"tileops-{slug}"
         round_dir = config.rounds / slug
         plan = {"round": slug, "op": name, "wiki": page.url, "nightly_commit": page.commit,
-                "workloads": [row.workload for row in op.rows], "branch": branch,
+                "workloads": [row.workload for row in op.rows], "measured": op.measured, "branch": branch,
                 "worktree": str(worktree), "round_dir": str(round_dir)}
         if dry_run:
             return plan
@@ -253,7 +253,7 @@ def start(config: Config, name: str, *, page: wiki.Page | None = None, dry_run: 
         ledger.append("foundry", round=slug, foundry_source=str(source), tilefoundry_base=prepared.commit)
 
         values = {
-            "SLUG": slug, "OP": name, "WIKI_URL": page.url, "NIGHTLY_DATE": page.date,
+            "SLUG": slug, "ROUND_DIR": round_dir, "OP": name, "WIKI_URL": page.url, "NIGHTLY_DATE": page.date,
             "NIGHTLY_RUN": page.run_id, "NIGHTLY_RUN_URL": page.run_url, "NIGHTLY_COMMIT": page.commit, "BENCHMARK": op.benchmark,
             "ROWS": op.table(), "UPSTREAM": config.upstream, "BRANCH": branch, "TILEOPS_BASE": tileops_base,
             "TILEOPS_WORKTREE": worktree, "TILEFOUNDRY_BASE": prepared.commit,

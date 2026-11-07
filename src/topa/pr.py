@@ -33,7 +33,7 @@ def gate(config: Config, slug: str | None = None) -> Round:
     current = find(config, slug)
     try:
         validate_round(current.dir, Path(current.meta["worktree"]), "HEAD",
-                       tuple(current.meta.get("workloads", ())))
+                       tuple(current.meta.get("workloads", ())), current.meta.get("measured", 0))
     except GateError as error:
         raise SystemExit(f"TileFoundry artifact gate: FAIL: {error}") from error
     print("TileFoundry artifact gate: PASS")

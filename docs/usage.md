@@ -56,7 +56,8 @@ writes. The op's rows on that page, with its manifest, workloads, tests and benc
 the round's requirement; topa files no issue for it.
 
 The agent works on its own. It opens a PR from your fork when every row reaches its
-fastest comparator, or when it beats main without reaching the bar on every row. Otherwise
+fastest comparator, or when it beats main without reaching the bar on every row; either
+way, no row may be slower than main. Otherwise
 it writes its stop records in `report.md` and opens no PR.
 Follow it with `topa round status`, read its screen with `herdr agent read <pane-id>`, and
 send it instructions with `topa round say <slug> "..."`.

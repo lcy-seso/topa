@@ -174,7 +174,7 @@ def _time(value: object) -> float | None:
     return number if math.isfinite(number) and number > 0 and not isinstance(value, bool) else None
 
 
-def _validate_performance(text: str, workloads: tuple[str, ...], result: str) -> None:
+def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, result: str) -> None:
     """The environment, the method, and one row per workload, none of them slower than main.
 
     A `bar met` result has no ratio below `BEHIND`. A `below bar` result ships only as an
@@ -208,8 +208,8 @@ def _validate_performance(text: str, workloads: tuple[str, ...], result: str) ->
         if result == "bar met" and any((_time(row[i]) if i < len(row) else None) is None
                                        or _time(row[i]) < BEHIND for i in ratios):
             raise GateError(f"Performance: row {name!r} is behind its comparator, so the bar is not met")
-    if not seen:
-        raise GateError("Performance: the results table has no row")
+    if not seen or len(seen) < measured:
+        raise GateError(f"Performance: the results table has {len(seen)} rows; the op has {measured} measured rows")
     absent = [name for name in workloads if name not in seen]
     if absent:
         raise GateError(f"Performance: the results table lacks the rows behind {', '.join(absent)}")
@@ -217,7 +217,7 @@ def _validate_performance(text: str, workloads: tuple[str, ...], result: str) ->
         raise GateError("Performance: a below bar result must beat main on a row behind")
 
 
-def _validate_pr(round_dir: Path, final_hir: Path, result: str, workloads: tuple[str, ...]) -> None:
+def _validate_pr(round_dir: Path, final_hir: Path, result: str, workloads: tuple[str, ...], measured: int) -> None:
     title, body = read_pr(round_dir)
     for name, text in ((PR_FILE, f"{title}\n{body}"),
                        (COMMENTS_FILE, _required_file(round_dir, COMMENTS_FILE).read_text(encoding="utf-8"))):
@@ -238,7 +238,7 @@ def _validate_pr(round_dir: Path, final_hir: Path, result: str, workloads: tuple
         raise GateError("TileFoundry Description is not the exact final HIR")
     if "tf.schedule(" not in match.group(1):
         raise GateError("the final HIR must carry its tf.schedule instruction choices")
-    _validate_performance(comments["Performance"], workloads, result)
+    _validate_performance(comments["Performance"], workloads, measured, result)
     stated = comments["Result And Limitations"].splitlines()[1:]
     if next((line.strip() for line in stated if line.strip()), None) != f"**{result}**":
         raise GateError(f"Result And Limitations must open with **{result}**, the result of provenance.json")
@@ -277,10 +277,11 @@ def _list(provenance: dict, name: str) -> list:
 
 
 def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD",
-                   workloads: tuple[str, ...] = ()) -> dict:
+                   workloads: tuple[str, ...] = (), measured: int = 0) -> dict:
     """Validate only facts a program can decide without interpreting optimization quality.
 
-    *workloads* are the op's rows behind; the Performance table must show each of them.
+    *workloads* are the op's rows behind and *measured* its count of measured rows; the
+    Performance table must show each row behind and as many rows as were measured.
     """
     round_dir = round_dir.resolve()
     tileops_repo = tileops_repo.resolve()
@@ -295,6 +296,8 @@ def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD",
     foundry_base = provenance.get("tilefoundry_base")
     if not isinstance(foundry_base, str) or re.fullmatch(r"[0-9a-f]{40}", foundry_base) is None:
         raise GateError("provenance tilefoundry_base must be the full TileFoundry commit")
+    if provenance.get("candidate_commit") != _git(tileops_repo, "rev-parse", head).stdout.strip():
+        raise GateError("provenance candidate_commit must be the commit the PR ships; measure it again")
     result = provenance.get("result")
     if result not in RESULTS:
         raise GateError(f"provenance result must be one of: {', '.join(RESULTS)}")
@@ -303,7 +306,11 @@ def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD",
     _required_file(round_dir, provenance.get("runtime_twin"))
     _passed(_record(round_dir, provenance.get("reference_check"), "reference_check", "check",
                     flags=("--expected", "--json")), "reference_check")
-    for index, record in enumerate(_list(provenance, "floor")):
+    floor = _list(provenance, "floor")
+    absent = sorted(set(workloads) - {record.get("workload") for record in floor if isinstance(record, dict)})
+    if absent:
+        raise GateError(f"floor lacks the rows behind {', '.join(absent)}")
+    for index, record in enumerate(floor):
         _analysis(_record(round_dir, record, f"floor[{index}]", "analyze", flags=("--roofline", "--json")),
                   f"floor[{index}]")
     placements = _list(provenance, "placements")
@@ -319,8 +326,9 @@ def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD",
     for index, iteration in enumerate(_list(provenance, "iterations")):
         if not isinstance(iteration, dict) or not all(_real_text(iteration.get(k)) for k in ("change", "basis")):
             raise GateError(f"iterations[{index}] must record its change and its basis")
-        if not isinstance(iteration.get("measured_us"), (int, float)) or _time(iteration["measured_us"]) is None:
-            raise GateError(f"iterations[{index}] must record a positive measured_us")
+        for key in ("predicted_us", "measured_us"):
+            if not isinstance(iteration.get(key), (int, float)) or _time(iteration[key]) is None:
+                raise GateError(f"iterations[{index}] must record a positive {key}")
     for section in ("tests", "benchmark"):
         _record(round_dir, provenance.get(section), section)
     for review in _list(provenance, "reviews"):
@@ -332,5 +340,5 @@ def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD",
     if not _real_text(production_kernel):
         raise GateError("provenance must declare production_kernel as src/tileops/<path>.py:<Symbol>")
     _validate_production_diff(tileops_repo, base, head, production_kernel)
-    _validate_pr(round_dir, final_hir, result, workloads)
+    _validate_pr(round_dir, final_hir, result, workloads, measured)
     return provenance

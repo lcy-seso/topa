@@ -77,11 +77,12 @@ class GateTests(unittest.TestCase):
         run = {"command": "pytest x", "report": "e/log"}
         self.provenance = {
             "tileops_base": self.base, "tilefoundry_base": "b" * 40, "result": "bar met",
+            "candidate_commit": git(self.repo, "rev-parse", "HEAD"),
             "final_hir": "work/final_hir.py", "runtime_twin": "work/twin.py",
             "production_kernel": "src/tileops/kernels/k.py:K",
             "reference_check": {"command": "tilefoundry check work/final_hir.py:M --expected r.pt --json e/pass.json",
                                 "report": "e/pass.json"},
-            "floor": [analyze("--roofline", workload="w")],
+            "floor": [analyze("--roofline", workload="1")],
             "placements": [analyze("--performance", placement="a", chosen=True),
                            analyze("--performance", placement="b", chosen=False)],
             "schedule": {"command": "tilefoundry schedule finalize work/final_hir.py:M work/final.tir",
@@ -91,13 +92,13 @@ class GateTests(unittest.TestCase):
             "tests": run, "benchmark": run, "reviews": ["e/log"],
         }
         self.write_provenance()
-        self.workloads = ("1",)
+        self.workloads, self.measured = ("1",), 1
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
     def validate(self) -> dict:
-        return gate.validate_round(self.round, self.repo, workloads=self.workloads)
+        return gate.validate_round(self.round, self.repo, workloads=self.workloads, measured=self.measured)
 
     def write_provenance(self) -> None:
         (self.round / "provenance.json").write_text(json.dumps(self.provenance))
@@ -153,11 +154,17 @@ class GateTests(unittest.TestCase):
                 "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | inf | 1 | 1 | 1 | 1 | 1 |")),
             "row '1' is slower than main": lambda: self.edit(
                 "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 1 | 2 | 1 | 1 | 1 | 1 |")),
-            "lacks the rows behind w2": lambda: setattr(self, "workloads", ("1", "w2")),
+            "the results table lacks the rows behind w2": lambda: (
+                setattr(self, "workloads", ("1", "w2")), p["floor"].append({**p["floor"][0], "workload": "w2"})),
+            "the op has 2 measured rows": lambda: setattr(self, "measured", 2),
+            "floor lacks the rows behind w2": lambda: setattr(self, "workloads", ("1", "w2")),
+            "candidate_commit must be the commit": lambda: p.update(candidate_commit="c" * 40),
+            "positive predicted_us": lambda: p["iterations"][0].pop("predicted_us"),
             "exposes a local path": lambda: self.edit("pr-comments.md", lambda t: t + "/home/x/log\n"),
             "forbidden paths": lambda: (Path(self.repo, "benchmarks").mkdir(),
                                         Path(self.repo, "benchmarks/b.py").write_text("x\n"),
-                                        git(self.repo, "add", "."), git(self.repo, "commit", "-qm", "b")),
+                                        git(self.repo, "add", "."), git(self.repo, "commit", "-qm", "b"),
+                                        p.update(candidate_commit=git(self.repo, "rev-parse", "HEAD"))),
         }
         for message, defect in cases.items():
             with self.subTest(message):
@@ -218,6 +225,7 @@ class WikiTests(unittest.TestCase):
             "1 rows, the queue says 2": re.sub(r"\| `llama-8b-chunk-decodes-float16` .*\n", "", text),
             "the line under the header": text.replace("| ---: | --- | --- | --- | ---: | ---: | ---: |", ""),
             "has ops the queue lacks: ReciprocalFwdOp": re.sub(r"\| 19 \| .*\n", "", text),
+            "repeated '### DivFwdOp' heading": text + "\n### DivFwdOp\n",
         }
         for message, broken in cases.items():
             with self.subTest(message), self.assertRaisesRegex(wiki.FormatError, re.escape(message)):

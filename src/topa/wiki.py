@@ -93,10 +93,14 @@ def _table(lines: list[str], header: str, separator: str, row: re.Pattern, where
     return matches
 
 
-def _sections(text: str, marker: str) -> dict[str, list[str]]:
-    """The lines under each `<marker> <name>` heading of *text*."""
+def _sections(text: str, marker: str, where: str) -> dict[str, list[str]]:
+    """The lines under each `<marker> <name>` heading of *text*; a repeated heading is an error."""
     parts = re.split(rf"^{marker} (.+)$", text, flags=re.MULTILINE)
-    return {name.strip(): body.splitlines() for name, body in zip(parts[1::2], parts[2::2])}
+    names = [name.strip() for name in parts[1::2]]
+    repeated = sorted({name for name in names if names.count(name) > 1})
+    if repeated:
+        raise FormatError(f"{where}: repeated '{marker} {', '.join(repeated)}' heading")
+    return {name: body.splitlines() for name, body in zip(names, parts[2::2])}
 
 
 def parse(text: str, date: str, url: str) -> Page:
@@ -106,17 +110,19 @@ def parse(text: str, date: str, url: str) -> Page:
     nightly = NIGHTLY.search(text)
     if nightly is None:
         raise FormatError(f"{where}: no 'Nightly run [<id>](<url>), commit [...](.../commit/<sha>)' line")
-    sections = _sections(text, "##")
+    sections = _sections(text, "##", where)
     for name in ("Queue", "Rows behind"):
         if name not in sections:
             raise FormatError(f"{where}: no '## {name}' section")
     queue = _table(sections["Queue"], QUEUE_HEADER, QUEUE_SEPARATOR, QUEUE_ROW, f"{where} ## Queue")
-    behind = _sections("\n".join(sections["Rows behind"]), "###")
+    behind = _sections("\n".join(sections["Rows behind"]), "###", f"{where} ## Rows behind")
     ops = []
     for rank, match in enumerate(queue, 1):
         number, name, category, label, worst, count, measured, nightlies = match.groups()
         if int(number) != rank:
             raise FormatError(f"{where} ## Queue: row {rank} is numbered {number}")
+        if any(op.name == name for op in ops):
+            raise FormatError(f"{where} ## Queue: {name} is listed twice")
         if name not in behind:
             raise FormatError(f"{where}: no '### {name}' under '## Rows behind'")
         lines = behind[name]
