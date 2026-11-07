@@ -1,8 +1,8 @@
 # {{SLUG}}: bring {{OP}} to its fastest comparator
 
-Make `{{OP}}` of [tile-ai/TileOPs](https://github.com/tile-ai/TileOPs) at least as fast as
-its fastest comparator with [TileFoundry](https://github.com/tile-ai/TileFoundry). The
-code, the PR and any TileFoundry issue are public.
+Optimize `{{OP}}` of [tile-ai/TileOPs](https://github.com/tile-ai/TileOPs) with
+[TileFoundry](https://github.com/tile-ai/TileFoundry) toward the bar below. The code, the
+PR and any TileFoundry issue are public.
 
 ## Requirement
 
@@ -108,9 +108,10 @@ Exit: the check passes on every output of every workload.
 2. Record each workload's DRAM floor: the bytes it must move over the DRAM bandwidth that
    `tilefoundry target show` gives.
 3. Check the flops and traffic by hand: each input read once, each output written once.
-4. Fix the HIR where the hand count and the report disagree.
+4. Where the hand count and the report disagree, find which is wrong: fix the HIR or the
+   count, or record a TileFoundry finding.
 5. List placements, including the incumbent's and the fastest comparator's, read from `ncu`
-   and the comparator's generated source.
+   and, where it exists, the comparator's generated source. Record what cannot be read.
 6. Run `analyze ... --memory --performance --json` on each placement.
 7. Choose one by waves, storage use and predicted time, and record why.
 
@@ -222,7 +223,7 @@ Exit: the verification passes, and the result of the bar is unchanged.
 17. Answer each other review comment with a test, a measurement or a rule.
 18. After a fix or a base move, repeat steps 1-14.
 
-Exit: the PR is open and its link is reported.
+Exit: the PR is open, CI passes, and every review comment is fixed or answered.
 
 ## Ending without a PR
 
@@ -237,7 +238,8 @@ Exit: the PR is open and its link is reported.
 ## TileFoundry findings
 
 - Record a TileFoundry bug that blocks you as a finding.
-- Continue with the part of the work that still runs.
+- Continue with the next stage the finding does not block; follow
+  [Ending without a PR](#ending-without-a-pr) when it blocks the rest of the round.
 - Keep its reproducer as it fails, with the command and raw output, in
   `work/blocked/<finding-id>/`.
 - Before the PR or the stop report, open one issue on `tile-ai/TileFoundry` for all

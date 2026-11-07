@@ -115,6 +115,11 @@ class GateTests(unittest.TestCase):
                   .replace("| timer step (us) | 1 |", "| timer step (us) | 0.02 |"))
         self.assertEqual(self.validate()["result"], "bar met")
 
+    def test_tie_at_the_dram_floor_meets_the_bar(self) -> None:
+        self.edit("pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 2 | 1 | 1 | 1 | 0.5 | 0.5 |")
+                  .replace("| timer step (us) | 1 |", "| timer step (us) | 0.02 |"))
+        self.assertEqual(self.validate()["result"], "bar met")
+
     def test_unfilled_template_fails(self) -> None:
         for name in ("pr-template.md", "pr-comments.md"):
             with self.subTest(name):
@@ -158,6 +163,8 @@ class GateTests(unittest.TestCase):
             "more than one timer step behind": lambda: self.edit(
                 "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 1 | 1 | 0.5 | 1 | 0.5 | 0.5 |")
                 .replace("| timer step (us) | 1 |", "| timer step (us) | 0.02 |")),
+            "rows 1 appear more than once": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 1 | 1 | 1 | 1 | 1 | 1 |\n| 1 | 2 | 1 | 1 | 1 | 1 | 1 |")),
             "timer step must be a positive": lambda: self.edit(
                 "pr-comments.md", lambda t: t.replace("| timer step (us) | 1 |", "| timer step (us) | x |")),
             "states ratio 1.0, its times give 0.5000": lambda: self.edit(

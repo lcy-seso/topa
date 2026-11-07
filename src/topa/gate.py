@@ -217,6 +217,11 @@ def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, 
         raise GateError("Performance: the other-ops table needs main (us) and candidate (us) columns")
     if others:
         _not_slower(others, 2)
+    names = [row[0].strip("`") for row in results[1:]] + [
+        " ".join(cell.strip("`") for cell in row[:2]) for row in others[1:]]
+    repeated = sorted({name for name in names if names.count(name) > 1})
+    if repeated:
+        raise GateError(f"Performance: rows {', '.join(repeated)} appear more than once")
     seen = {row[0].strip("`") for row in results[1:]}
     if not seen or len(seen) < measured:
         raise GateError(f"Performance: the results table has {len(seen)} rows; the op has {measured} measured rows")
@@ -257,7 +262,7 @@ def _validate_pr(round_dir: Path, final_hir: Path, result: str, workloads: tuple
             raise GateError(f"{name} exposes a local path")
     if not re.fullmatch(r"\[Perf\]\[foundry\]\[[A-Za-z0-9_-]+\] [A-Z`].+", title):
         raise GateError(f"the {PR_FILE} title does not follow [Perf][foundry][Family] Description")
-    if tuple(name for name, _ in sections(body)) != BODY_SECTIONS:
+    if tuple(name for name, _ in sections(body)) not in (BODY_SECTIONS, (*BODY_SECTIONS, "Regression")):
         raise GateError(f"{PR_FILE} must have exactly the sections {', '.join(BODY_SECTIONS)}, in order")
     comments = dict(read_comments(round_dir))
     match = re.search(r"```python\s*\n(.*?)\n```", comments["TileFoundry Description"], flags=re.DOTALL)
