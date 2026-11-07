@@ -5,10 +5,11 @@ Optimize the op with [TileFoundry](https://github.com/tile-ai/TileFoundry) towar
 | Result | When | Do |
 | --- | --- | --- |
 | `bar met` | Every row of the op, behind or not, beats its fastest comparable comparator in the median and in every repeat, or ties it within one timer step or at the DRAM floor. | Open the PR. |
-| `below bar` | The bar is not met, and the candidate beats main on a row of the op. | Open the PR; list the unmet rows in Result And Limitations. |
+| `below bar` | The bar is not met, and the candidate beats main on a row of the op: candidate / main below 0.99. | Open the PR; list the unmet rows in Result And Limitations. |
 | none | Neither, or a person must decide. | Follow [Ending without a PR](#ending-without-a-pr). |
 
-- Both `bar met` and `below bar` also require that no row of any op is slower than main.
+- Both `bar met` and `below bar` also require that no row of any op is slower than main:
+  main / candidate below 0.99, the nightly's threshold for a row behind.
 - "Any op" includes every op that shares a kernel the round changes.
 - `topa gate` checks this rule on the Performance medians; the review checks the repeats.
 
