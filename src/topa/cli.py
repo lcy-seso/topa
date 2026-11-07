@@ -112,6 +112,20 @@ def _pr(args: argparse.Namespace) -> int:
     return 0
 
 
+def _review_prepare(args: argparse.Namespace) -> int:
+    from topa.review import prepare
+
+    _print_json(prepare(config_module.load(), args.pr))
+    return 0
+
+
+def _review_post(args: argparse.Namespace) -> int:
+    from topa.review import post
+
+    _print_json(post(config_module.load(), args.pr))
+    return 0
+
+
 def _hook(args: argparse.Namespace) -> int:
     from topa.hook import pre_tool_use
 
@@ -181,6 +195,15 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--reviewed", action="store_true")
     p.add_argument("--no-watch", action="store_true", help="do not wait on the PR checks")
     p.set_defaults(func=_pr)
+
+    review = sub.add_parser("review", help="review a TileOPs PR once").add_subparsers(
+        dest="review_command", required=True)
+    p = review.add_parser("prepare", help="write the PR's review inputs and check out its head")
+    p.add_argument("pr", type=int)
+    p.set_defaults(func=_review_prepare)
+    p = review.add_parser("post", help="post findings.json as one COMMENT review")
+    p.add_argument("pr", type=int)
+    p.set_defaults(func=_review_post)
 
     hook = sub.add_parser("hook", help="Claude Code hooks").add_subparsers(dest="hook_command", required=True)
     p = hook.add_parser("pre-tool-use", help="route a round's shell commands into its container")

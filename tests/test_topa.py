@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from topa import config, gate, ledger, wiki
+from topa import config, gate, ledger, review, wiki
 from topa.hook import decide
 from topa.container import foreign_files
 from topa.round import CLEAR_CLAUDE_ENV, kit, render, round_slug, start
@@ -303,6 +303,71 @@ class EnvironmentTests(unittest.TestCase):
             (root / "work").mkdir()
             (root / "work" / "a.py").write_text("")
             self.assertFalse(foreign_files([root, root / "missing"]))
+
+
+DIFF = """diff --git a/tests/t.py b/tests/t.py
+--- a/tests/t.py
++++ b/tests/t.py
+@@ -10,3 +10,3 @@ def f():
+ keep
+---x
++++x
+ keep
+diff --git a/gone.py b/gone.py
+--- a/gone.py
++++ /dev/null
+@@ -1 +0,0 @@
+-x
+diff --git a/old.py b/new.py
+similarity index 50%
+rename from old.py
+rename to new.py
+--- a/old.py
++++ b/new.py
+@@ -1 +1 @@
+-x
++y
+diff --git a/docs/a b.md b/docs/a b.md
+--- a/docs/a b.md	
++++ b/docs/a b.md	
+@@ -1 +1 @@
+-x
++y
+"""
+
+
+class ReviewTests(unittest.TestCase):
+    def test_checklists_follow_changed_paths(self) -> None:
+        names = lambda paths: [path.name for path in review.checklists(paths)]
+        self.assertEqual(names(["src/tileops/elementwise.py", "scripts/a.py"]), ["general.md"])
+        self.assertEqual(names(["src/tileops/_kernels/gemm/a.py"]), ["general.md", "ops.md"])
+        self.assertEqual(names(["benchmarks/tests/a.py"]), ["general.md", "tests.md", "benchmarks.md"])
+        self.assertEqual(names(["workloads/a.py", "src/tileops/manifest/spec/a.yaml", "README.md"]),
+                         ["general.md", "tests.md", "manifest.md", "docs.md"])
+        every = ["src/tileops/csrc/a.h", "tests/a.py", "benchmarks/ops/a.py", "src/tileops/manifest/a.py", "docs/a.md"]
+        self.assertEqual(names(every), ["general.md", "ops.md", "tests.md", "benchmarks.md", "manifest.md", "docs.md"])
+        self.assertTrue(all(path.is_file() for path in review.checklists(every)))
+
+    def test_comments_anchor_on_hunk_lines_only(self) -> None:
+        self.assertEqual(review.commentable(DIFF), {
+            ("tests/t.py", "RIGHT", 10), ("tests/t.py", "RIGHT", 11), ("tests/t.py", "RIGHT", 12),
+            ("tests/t.py", "LEFT", 10), ("tests/t.py", "LEFT", 11), ("tests/t.py", "LEFT", 12),
+            ("gone.py", "LEFT", 1), ("new.py", "LEFT", 1), ("new.py", "RIGHT", 1),
+            ("docs/a b.md", "LEFT", 1), ("docs/a b.md", "RIGHT", 1)})
+
+    def test_select_refuses_lines_off_the_diff(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "gone.py:1"):
+            review.select([{"path": "gone.py", "line": 1, "body": "x"}], review.commentable(DIFF), [])
+
+    def test_select_skips_comments_topa_posted(self) -> None:
+        posted = [{"path": "tests/t.py", "body": "Old  finding.\n\n" + review.MARKER},
+                  {"path": "tests/t.py", "body": "A person said this."}]
+        comments = [{"path": "tests/t.py", "line": 11, "body": "Old finding."},
+                    {"path": "tests/t.py", "line": 12, "body": "A person said this."},
+                    {"path": "gone.py", "line": 1, "side": "LEFT", "body": "Old finding."}]
+        fresh = review.select(comments, review.commentable(DIFF), posted)
+        self.assertEqual([(c["path"], c["body"]) for c in fresh],
+                         [("tests/t.py", "A person said this."), ("gone.py", "Old finding.")])
 
 
 if __name__ == "__main__":

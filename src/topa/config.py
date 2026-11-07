@@ -62,6 +62,11 @@ class Config:
         return HOME / "rounds"
 
     @property
+    def reviews(self) -> Path:
+        """One directory per reviewed PR: its review inputs, findings and worktree."""
+        return HOME / "reviews"
+
+    @property
     def ssh_config_dir(self) -> Path:
         return HOME / "ssh-config"
 

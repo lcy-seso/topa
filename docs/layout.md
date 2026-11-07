@@ -7,6 +7,8 @@
   beside it are the PR body and its four comments, which the agent fills in.
 - `src/topa/knowledge/tilelang.md` holds TileLang and ptxas facts that earlier rounds
   confirmed. Rounds read it. People add to it from round reports.
+- `src/topa/checklists/` holds what a review checks beyond TileOPs's own docs and CI.
+  `topa review prepare` names the ones the changed paths need.
 - `src/topa/kit/container/` holds the agent image: the TileOPs runner image plus sshd.
 - `src/topa/kit/stage.py` runs in the agent image, once per image and dependency list. It stages, for offline
   install, the wheels TileFoundry needs beyond the runner and the build backends of
@@ -14,8 +16,8 @@
 - `src/topa/gate.py` is the evidence gate that runs before a PR.
 - `src/topa/wiki.py` reads the Perf Tracker page that `scripts/perf_tracker.py` in
   tile-ai/TileOPs writes. Change both together.
-- `.claude/skills/topa-hunt` and `topa-round` drive these commands when you work in this
-  repository.
+- `.claude/skills/topa-hunt`, `topa-round` and `topa-review` drive these commands when you
+  work in this repository.
 
 ## On the machine
 
@@ -25,6 +27,8 @@
   ledger.jsonl                 every event of every round; never rewritten
   claim.lock                   held while a round claims its op
   rounds/<slug>/               the round's output; topa never deletes it
+  reviews/<owner>/<repo>/<PR>/  a reviewed PR: its inputs, findings.json, and worktree/ at
+                               the PR head until `topa review post`
   cache/                       rebuilt on demand; safe to delete when no round runs
     wiki/                      the TileOPs wiki clone that holds the Perf Tracker
     stage/<key>/               wheels and build backends a round installs beyond the runner
