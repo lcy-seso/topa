@@ -20,11 +20,17 @@ class GateError(ValueError):
 
 # What the round is measured against, and the repository's own tooling.
 FORBIDDEN_ROOTS = ("benchmarks/", "workloads/", "src/tileops/manifest/", "scripts/", ".github/")
-# The round's PR: `kit/round/pr-template.md` is the title and body, `pr-comments.md`
-# one comment per section, both filled in.
+# The round's PR: `pr-template.md` of the round's kind in `kit/round/` is the title and
+# body; a perf round's `pr-comments.md` holds one comment per section. Both filled in.
 PR_FILE = "pr-template.md"
 COMMENTS_FILE = "pr-comments.md"
 BODY_SECTIONS = ("Summary", "Test plan", "Test node delta", "Benchmark")
+# TileOPs `.github/PULL_REQUEST_TEMPLATE.md`: a general PR keeps these in order, deleting
+# those that do not apply except the first two.
+GENERAL_SECTIONS = (*BODY_SECTIONS, "Regression")
+# TileOPs `scripts/ci/types.sh`: `[Type] description` or `[Type][Scope] description`.
+GENERAL_TITLE = re.compile(r"\[(Bench|BugFix|Chore|CI|Design|Doc|Enhancement|Feat|Fix|Maintain|Perf|Refactor|"
+                           r"Style|Test)\](\[[A-Za-z0-9_-]+\])? [A-Z`].+")
 COMMENT_SECTIONS = ("TileFoundry Description", "Performance", "Result And Limitations", "TileFoundry Findings")
 RESULTS = ("bar met", "below bar")
 # How far a stated ratio may sit from the one its rounded times give.
@@ -88,7 +94,8 @@ def _git(repo: Path, *args: str, text: bool = True) -> subprocess.CompletedProce
     return process
 
 
-def _validate_production_diff(repo: Path, base: str, head: str, declaration: str) -> None:
+def _validate_production_diff(repo: Path, base: str, head: str) -> list[str]:
+    """The paths the diff changes; it must change some, none forbidden, with no authorship trailer."""
     process = _git(repo, "diff", "--name-only", "-z", base, head, text=False)
     changed = [part.decode(errors="replace") for part in process.stdout.split(b"\0") if part]
     if not changed:
@@ -96,14 +103,10 @@ def _validate_production_diff(repo: Path, base: str, head: str, declaration: str
     forbidden = [path for path in changed if path.startswith(FORBIDDEN_ROOTS)]
     if forbidden:
         raise GateError("production diff changes forbidden paths: " + ", ".join(forbidden))
-    path, _, symbol = declaration.rpartition(":")
-    if not path.startswith("src/tileops/") or not path.endswith(".py") or not _real_text(symbol):
-        raise GateError("production_kernel must be src/tileops/<path>.py:<Symbol>")
-    if path not in changed:
-        raise GateError("the declared production kernel file is unchanged")
     messages = _git(repo, "log", "--format=%B", f"{base}..{head}").stdout
     if re.search(r"^(Co-authored-by|Signed-off-by):", messages, flags=re.MULTILINE | re.IGNORECASE):
         raise GateError("commit messages contain an extra authorship trailer")
+    return changed
 
 
 def sections(text: str) -> list[tuple[str, str]]:
@@ -237,19 +240,39 @@ def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, 
         raise GateError("Performance: a below bar result must beat main on a row")
 
 
-def _validate_pr(round_dir: Path, final_hir: Path, result: str, workloads: tuple[str, ...], measured: int) -> None:
+def _validate_pr(round_dir: Path, kind: str, issue: int | None) -> None:
+    """The PR text of either kind: filled in, no local path, the kind's title and sections, the issue link."""
     title, body = read_pr(round_dir)
-    for name, text in ((PR_FILE, f"{title}\n{body}"),
-                       (COMMENTS_FILE, _required_file(round_dir, COMMENTS_FILE).read_text(encoding="utf-8"))):
+    texts = [(PR_FILE, f"{title}\n{body}")]
+    if kind == "perf":
+        texts.append((COMMENTS_FILE, _required_file(round_dir, COMMENTS_FILE).read_text(encoding="utf-8")))
+    for name, text in texts:
         left = PLACEHOLDER.search(re.sub(r"```.*?```", "", text, flags=re.DOTALL)) or EMPTY_BLOCK.search(text)
         if left:
             raise GateError(f"{name} still has the placeholder {left.group(0)}")
         if LOCAL_PATH.search(text):
             raise GateError(f"{name} exposes a local path")
-    if not re.fullmatch(r"\[Perf\]\[foundry\]\[[A-Za-z0-9_-]+\] [A-Z`].+", title):
-        raise GateError(f"the {PR_FILE} title does not follow [Perf][foundry][Family] Description")
-    if tuple(name for name, _ in sections(body)) not in (BODY_SECTIONS, (*BODY_SECTIONS, "Regression")):
-        raise GateError(f"{PR_FILE} must have exactly the sections {', '.join(BODY_SECTIONS)}, in order")
+    found = tuple(name for name, _ in sections(body))
+    if kind == "perf":
+        if not re.fullmatch(r"\[Perf\]\[foundry\]\[[A-Za-z0-9_-]+\] [A-Z`].+", title):
+            raise GateError(f"the {PR_FILE} title does not follow [Perf][foundry][Family] Description")
+        if found not in (BODY_SECTIONS, (*BODY_SECTIONS, "Regression")):
+            raise GateError(f"{PR_FILE} must have exactly the sections {', '.join(BODY_SECTIONS)}, in order")
+    else:
+        if not GENERAL_TITLE.fullmatch(title):
+            raise GateError(f"the {PR_FILE} title does not follow [Type] Description or [Type][Scope] Description")
+        if found[:2] != GENERAL_SECTIONS[:2] or found != tuple(s for s in GENERAL_SECTIONS if s in found) \
+                or len(set(found)) != len(found):
+            raise GateError(f"{PR_FILE} must have Summary, Test plan and then only the sections "
+                            f"{', '.join(GENERAL_SECTIONS[2:])}, in that order")
+    if issue is not None:
+        link = f"{'Refs' if kind == 'perf' else 'Closes'} #{issue}"
+        if not re.search(rf"^{link}$", body, flags=re.MULTILINE):
+            raise GateError(f"{PR_FILE} must link the issue with the line {link}")
+
+
+def _validate_comments(round_dir: Path, final_hir: Path, result: str, workloads: tuple[str, ...],
+                       measured: int) -> None:
     comments = dict(read_comments(round_dir))
     match = re.search(r"```python\s*\n(.*?)\n```", comments["TileFoundry Description"], flags=re.DOTALL)
     if not match:
@@ -294,12 +317,15 @@ def _list(provenance: dict, name: str) -> list:
     return value
 
 
-def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD",
-                   workloads: tuple[str, ...] = (), measured: int = 0) -> dict:
+def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD", workloads: tuple[str, ...] = (),
+                   measured: int = 0, kind: str = "perf", issue: int | None = None) -> dict:
     """Validate only facts a program can decide without interpreting optimization quality.
 
-    *workloads* are the op's rows behind and *measured* its count of measured rows; the
-    Performance table must show each row behind and as many rows as were measured.
+    Every round binds its records to the commit it ships, keeps out of the forbidden
+    paths, records its tests and reviews, and fills in its PR text. A perf round also
+    passes the TileFoundry records and the Performance table: *workloads* are the op's
+    rows behind and *measured* its count of measured rows, which the table must show.
+    A perf round on an issue takes its rows from `workloads` in `provenance.json`.
     """
     round_dir = round_dir.resolve()
     tileops_repo = tileops_repo.resolve()
@@ -311,15 +337,33 @@ def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD",
         raise GateError("provenance tileops_base is not available in the TileOPs repository")
     if _git(tileops_repo, "status", "--porcelain").stdout.strip():
         raise GateError("TileOPs worktree must be clean and committed before the PR gate")
+    if provenance.get("candidate_commit") != _git(tileops_repo, "rev-parse", head).stdout.strip():
+        raise GateError("provenance candidate_commit must be the commit the PR ships; measure it again")
+    _record(round_dir, provenance.get("tests"), "tests", tilefoundry=False)
+    for review in _list(provenance, "reviews"):
+        _required_file(round_dir, review)
+    _required_file(round_dir, "report.md")
+    _validate_findings(round_dir)
+    changed = _validate_production_diff(tileops_repo, base, head)
+    _validate_pr(round_dir, kind, issue)
+    if kind == "perf":
+        if issue is not None:
+            workloads = tuple(_list(provenance, "workloads"))
+            if not all(_real_text(name) for name in workloads):
+                raise GateError("provenance workloads must name the workloads the issue lists")
+            measured = len(workloads)
+        _validate_perf(round_dir, provenance, changed, workloads, measured)
+    return provenance
+
+
+def _validate_perf(round_dir: Path, provenance: dict, changed: list[str], workloads: tuple[str, ...],
+                   measured: int) -> None:
+    """The TileFoundry records and the PR comments of a perf round."""
     foundry_base = provenance.get("tilefoundry_base")
     if not isinstance(foundry_base, str) or re.fullmatch(r"[0-9a-f]{40}", foundry_base) is None:
         raise GateError("provenance tilefoundry_base must be the full TileFoundry commit")
-    if provenance.get("candidate_commit") != _git(tileops_repo, "rev-parse", head).stdout.strip():
-        raise GateError("provenance candidate_commit must be the commit the PR ships; measure it again")
-    result = provenance.get("result")
-    if result not in RESULTS:
+    if provenance.get("result") not in RESULTS:
         raise GateError(f"provenance result must be one of: {', '.join(RESULTS)}")
-
     final_hir = _required_file(round_dir, provenance.get("final_hir"))
     _required_file(round_dir, provenance.get("runtime_twin"))
     _record(round_dir, provenance.get("reference_check"), "reference_check")
@@ -344,16 +388,13 @@ def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD",
         for key in ("predicted_us", "measured_us"):
             if not isinstance(iteration.get(key), (int, float)) or _time(iteration[key]) is None:
                 raise GateError(f"iterations[{index}] must record a positive {key}")
-    for section in ("tests", "benchmark"):
-        _record(round_dir, provenance.get(section), section, tilefoundry=False)
-    for review in _list(provenance, "reviews"):
-        _required_file(round_dir, review)
-
-    _required_file(round_dir, "report.md")
-    _validate_findings(round_dir)
-    production_kernel = provenance.get("production_kernel")
-    if not _real_text(production_kernel):
+    _record(round_dir, provenance.get("benchmark"), "benchmark", tilefoundry=False)
+    declaration = provenance.get("production_kernel")
+    if not _real_text(declaration):
         raise GateError("provenance must declare production_kernel as src/tileops/<path>.py:<Symbol>")
-    _validate_production_diff(tileops_repo, base, head, production_kernel)
-    _validate_pr(round_dir, final_hir, result, workloads, measured)
-    return provenance
+    path, _, symbol = declaration.rpartition(":")
+    if not path.startswith("src/tileops/") or not path.endswith(".py") or not _real_text(symbol):
+        raise GateError("production_kernel must be src/tileops/<path>.py:<Symbol>")
+    if path not in changed:
+        raise GateError("the declared production kernel file is unchanged")
+    _validate_comments(round_dir, final_hir, provenance["result"], workloads, measured)

@@ -1,4 +1,4 @@
-"""`topa round`: start, steer, inspect and stop one agent working one op.
+"""`topa round`: start, steer, inspect and stop one agent working one op or one issue.
 
 A round owns five things: a TileOPs worktree on its own branch, a herdr workspace
 whose pane runs the agent, a detached TileFoundry checkout, a container with one
@@ -29,6 +29,14 @@ SAY_LIMIT = 4000
 PLACEHOLDER = re.compile(r"\{\{([A-Z_]+)\}\}")
 
 
+# A TileOPs issue whose title starts with `[Perf]` gets the perf contract.
+PERF_ISSUE = re.compile(r"\[perf\]", re.IGNORECASE)
+# TileOPs `scripts/ci/types.sh`: the branch prefix of an issue's title type; any other is `fix`.
+BRANCH_PREFIX = {"bench": "bench", "benchmark": "bench", "bug": "fix", "chore": "chore", "design": "design",
+                 "doc": "doc", "docs": "doc", "feat": "feat", "maintain": "maintain", "meta": "chore",
+                 "refactor": "refactor", "style": "style", "test": "test"}
+
+
 def kit() -> Path:
     return Path(str(files("topa") / "kit" / "round"))
 
@@ -57,7 +65,7 @@ def round_slug(op: str, earlier: Iterable[dict[str, Any]]) -> str:
     """`<op>-r<k>`: the op in lower case without its `Op` suffix, k one past the slugs taken.
 
     The stem is cut to 26 characters so the slug fits herdr's agent names,
-    `[a-z][a-z0-9_-]{0,31}`.
+    `[a-z][a-z0-9_-]{0,31}`. An issue round passes `issue-<N>` as *op*.
     """
     stem = op.lower().removesuffix("op")[:26]
     taken = {view["round"] for view in earlier}
@@ -170,11 +178,17 @@ def _cd_pane(pane: str, path: Path) -> None:
 # --- start --------------------------------------------------------------------------
 
 
-def _write_round_dir(config: Config, path: Path, values: dict[str, Any], topa: Path) -> None:
-    shutil.copytree(kit(), path, dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns("brief.md", "__pycache__"))
-    brief = render((kit() / "brief.md").read_text(), values)
-    (path / "brief.md").write_text(brief)
+def brief(kind: str, values: dict[str, Any]) -> str:
+    """The shared brief with the *kind* section in place of `{{KIND}}`, every placeholder filled."""
+    shared = (kit() / "brief.md").read_text()
+    return render(shared.replace("{{KIND}}", (kit() / kind / "brief.md").read_text().strip()), values)
+
+
+def _write_round_dir(config: Config, path: Path, kind: str, values: dict[str, Any], topa: Path) -> None:
+    ignore = shutil.ignore_patterns("brief.md", "perf", "general", "__pycache__")
+    shutil.copytree(kit(), path, dirs_exist_ok=True, ignore=ignore)
+    shutil.copytree(kit() / kind, path, dirs_exist_ok=True, ignore=ignore)
+    (path / "brief.md").write_text(brief(kind, values))
     claude = path / ".claude"
     claude.mkdir(exist_ok=True)
     settings = {
@@ -205,12 +219,62 @@ def _environment(meta: dict[str, Any], warning: str | None, mismatched: list[str
     return "\n".join(lines) + "\n"
 
 
-def start(config: Config, name: str, *, page: wiki.Page | None = None, dry_run: bool = False,
-          force: bool = False) -> dict[str, Any]:
-    """Start a round on the op *name* of the wiki queue: the newest page unless *page* is given."""
+def _wiki_work(op: wiki.Op, page: wiki.Page) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The plan fields and brief values of a round on *op* of the wiki queue."""
+    requirement = (
+        f"The rows of `{op.name}` behind in the [Perf Tracker of {page.date}]({page.url}) (nightly run "
+        f"[{page.run_id}]({page.run_url}), commit `{page.commit}`, benchmark `{op.benchmark}`; CUPTI "
+        f"`device_busy_ms` in microseconds; ratio = comparator / TileOPs):\n\n{op.table()}\n\n"
+        f"The op is `{op.name}`. Take these rows and the op's manifest entry, Op, workloads, reference, "
+        "tests and benchmark as the whole requirement.")
+    plan = {"kind": "perf", "op": op.name, "wiki": page.url, "nightly_commit": page.commit,
+            "workloads": [row.workload for row in op.rows], "measured": op.measured}
+    return plan, {"TITLE": f"bring {op.name} to its fastest comparator", "REQUIREMENT": requirement,
+                  "LINK": "The PR links no issue."}
+
+
+def _issue_work(config: Config, number: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The plan fields and brief values of a round on TileOPs issue *number*; its body is the requirement."""
+    issue = sh.gh_json("issue", "view", str(number), "--repo", config.upstream,
+                       "--json", "number,title,body,labels,url,state")
+    if issue["state"] != "OPEN":
+        raise SystemExit(f"issue #{number} is {issue['state'].lower()}")
+    kind = "perf" if PERF_ISSUE.match(issue["title"]) else "general"
+    labels = ", ".join(label["name"] for label in issue["labels"]) or "none"
+    body = "\n".join(f"> {line}".rstrip() for line in (issue["body"] or "(no body)").splitlines())
+    requirement = (f"Issue [#{number}]({issue['url']}): {issue['title']} (labels: {labels})\n\n{body}\n\n"
+                   "Take this issue, with the code, tests and docs it names, as the whole requirement.")
+    if kind == "perf":
+        requirement += (" The op is the one the issue names, and its rows are the workloads the issue lists; "
+                        "copy their benchmark names into `workloads` in `provenance.json`.")
+    # A perf PR only refers to its issue: the nightly confirms the result, then the issue closes.
+    link = f"End Summary with the line `{'Refs' if kind == 'perf' else 'Closes'} #{number}`."
+    plan = {"kind": kind, "issue": number, "issue_url": issue["url"]}
+    return plan, {"TITLE": issue["title"], "REQUIREMENT": requirement, "LINK": link}
+
+
+def _branch(plan: dict[str, Any], title: str, category: str, slug: str) -> str:
+    if plan["kind"] == "perf":
+        return f"perf/{(category or 'ops').replace('_', '-')}/{slug}"
+    tag = re.match(r"\[([^\]]+)\]", title)
+    return f"{BRANCH_PREFIX.get(tag[1].lower(), 'fix') if tag else 'fix'}/issue/{slug}"
+
+
+def start(config: Config, name: str | None = None, *, issue: int | None = None, page: wiki.Page | None = None,
+          dry_run: bool = False, force: bool = False) -> dict[str, Any]:
+    """Start a round on the op *name* of the wiki queue (the newest page unless *page* is
+    given), or on the TileOPs *issue*."""
     sh.require("claude", "codex", "docker", "gh", "git", "herdr", "ssh", "ssh-keygen", "nvidia-smi")
-    page = page or wiki.fetch(config)
-    op = page.op(name)
+    if (name is None) == (issue is None):
+        raise SystemExit("name an op or pass --issue <N>, not both")
+    if issue is None:
+        page = page or wiki.fetch(config)
+        op = page.op(name)
+        work, values = _wiki_work(op, page)
+        stem, key, category = name, ("op", name), op.category
+    else:
+        work, values = _issue_work(config, issue)
+        stem, key, category = f"issue-{issue}", ("issue", issue), "issue"
     remote = sh.github_remote(config.tileops_repo, config.upstream)
     topa = topa_binary()
     with ledger.claim():
@@ -220,21 +284,21 @@ def start(config: Config, name: str, *, page: wiki.Page | None = None, dry_run: 
             raise SystemExit(f"{len(live)} rounds are live ({', '.join(live)}); max_rounds is "
                              f"{config.max_rounds}. Stop one, or pass --force.")
         for view in views.values():
-            if view.get("op") == name and view["state"] in ledger.LIVE:
-                raise SystemExit(f"round {view['round']} already works {name}")
-        slug = round_slug(name, views.values())
-        branch = f"perf/{(op.category or 'ops').replace('_', '-')}/{slug}"
+            if view.get(key[0]) == key[1] and view["state"] in ledger.LIVE:
+                raise SystemExit(f"round {view['round']} already works {name or f'issue #{issue}'}")
+        slug = round_slug(stem, views.values())
+        branch = _branch(work, values["TITLE"], category, slug)
         worktree = config.worktree_root / f"tileops-{slug}"
         round_dir = config.rounds / slug
-        plan = {"round": slug, "op": name, "wiki": page.url, "nightly_commit": page.commit,
-                "workloads": [row.workload for row in op.rows], "measured": op.measured, "branch": branch,
-                "worktree": str(worktree), "round_dir": str(round_dir)}
+        plan = {"round": slug, **work, "branch": branch, "worktree": str(worktree), "round_dir": str(round_dir)}
         if dry_run:
             return plan
         if round_dir.exists() or worktree.exists():
             raise SystemExit(f"{round_dir} or {worktree} already exists")
         ledger.append("create", **plan)
     try:
+        if issue is not None:
+            sh.run(["gh", "issue", "edit", str(issue), "--repo", config.upstream, "--add-assignee", "@me"])
         sh.bootstrap_docker(config)
         sh.note(f"fetching {remote}/main")
         sh.run(["git", "-C", config.tileops_repo, "fetch", "--quiet", remote, "main"])
@@ -252,14 +316,12 @@ def start(config: Config, name: str, *, page: wiki.Page | None = None, dry_run: 
         source, foundry_git = foundry.source(config, slug, prepared.commit)
         ledger.append("foundry", round=slug, foundry_source=str(source), tilefoundry_base=prepared.commit)
 
-        values = {
-            "SLUG": slug, "ROUND_DIR": round_dir, "OP": name, "WIKI_URL": page.url, "NIGHTLY_DATE": page.date,
-            "NIGHTLY_RUN": page.run_id, "NIGHTLY_RUN_URL": page.run_url, "NIGHTLY_COMMIT": page.commit, "BENCHMARK": op.benchmark,
-            "ROWS": op.table(), "UPSTREAM": config.upstream, "BRANCH": branch, "TILEOPS_BASE": tileops_base,
-            "TILEOPS_WORKTREE": worktree, "TILEFOUNDRY_BASE": prepared.commit,
+        values |= {
+            "SLUG": slug, "ROUND_DIR": round_dir, "UPSTREAM": config.upstream, "BRANCH": branch,
+            "TILEOPS_BASE": tileops_base, "TILEOPS_WORKTREE": worktree, "TILEFOUNDRY_BASE": prepared.commit,
             "TILEFOUNDRY_SOURCE": source, "KNOWLEDGE": knowledge(), "TOPA": topa,
         }
-        _write_round_dir(config, round_dir, values, topa)
+        _write_round_dir(config, round_dir, plan["kind"], values, topa)
 
         sh.note("starting the container")
         started = container.start(config, slug=slug, worktree=worktree, round_dir=round_dir,
@@ -339,7 +401,8 @@ def status(config: Config, *, every: bool = False) -> list[dict[str, Any]]:
         except sh.CommandError:
             pr = None
         rows.append({
-            "round": view["round"], "state": view["state"], "op": view.get("op"),
+            "round": view["round"], "state": view["state"],
+            "op": view.get("op") or (f"#{view['issue']}" if view.get("issue") else None),
             "branch": view.get("branch"), "gpu": view.get("gpu"), "pane": view.get("pane"),
             "agent": agent.get("agent_status") if agent else None,
             "pr": pr, "updated": view.get("updated"),

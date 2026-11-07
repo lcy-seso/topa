@@ -6,6 +6,7 @@
 | `topa config [--default]` | print the settings in effect / print a default `config.toml` |
 | `topa hunt [--cached]` | the newest Perf Tracker queue, with each op's rows and rounds |
 | `topa round start <Op>` | start a round on an op of the queue |
+| `topa round start --issue <N>` | start a round on a TileOPs issue and assign it to you |
 | `topa round say <slug> "..."` | message the round's agent |
 | `topa round status` | every round, its agent state and PR |
 | `topa round log [<slug>]` | ledger events |
