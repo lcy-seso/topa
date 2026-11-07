@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import sys
 from pathlib import Path
@@ -57,6 +58,10 @@ def _commands(command: str) -> list[list[str]]:
     return [words for words in commands if words]
 
 
+# Finding where a substitution ends needs a shell parser, so any line with one goes to the container.
+SUBSTITUTION = re.compile(r"[$<>]\(|`")
+
+
 def runs_on_the_host(command: str) -> bool:
     """Whether every program *command* invokes is a host-side one.
 
@@ -66,6 +71,9 @@ def runs_on_the_host(command: str) -> bool:
     `/.../.venv/bin/topa` the brief writes counts as `topa`. An operator inside
     quotes, as in `grep "a\\|b"`, does not split the line.
     """
+    # A line continuation can split `$(`, but `\\` before a newline is not one: test both texts.
+    if SUBSTITUTION.search(command) or SUBSTITUTION.search(command.replace("\\\n", "")):
+        return False
     try:
         commands = _commands(command)
     except ValueError:  # unbalanced quotes: let the container decide
