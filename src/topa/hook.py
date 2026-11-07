@@ -20,10 +20,10 @@ from pathlib import Path
 from typing import TextIO
 
 # These act on files, on GitHub, or on the round itself, not on the compute stack.
-# git and gh use the host credentials; topa drives the host. The text tools stay with
-# them, so `gh issue view 1 | head` is not moved into the container for its pipe.
+# git, gh and codex use the host credentials; topa drives the host. The text tools stay
+# with them, so `gh issue view 1 | head` is not moved into the container for its pipe.
 HOST_COMMANDS = frozenset({
-    "cd", "gh", "git", "ls", "cat", "pwd", "mkdir", "rm", "cp", "mv", "topa",
+    "cd", "codex", "gh", "git", "ls", "cat", "pwd", "mkdir", "rm", "cp", "mv", "topa",
     "echo", "printf", "head", "tail", "wc", "grep", "sort", "uniq", "cut", "tr", "tee",
 })
 

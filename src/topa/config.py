@@ -29,7 +29,6 @@ DEFAULTS: dict[str, Any] = {
     "no_proxy": "localhost,127.0.0.1,pypi.org,files.pythonhosted.org,download.pytorch.org",
     "upstream": "tile-ai/TileOPs",
     "fork_owner": None,
-    "tracker": 2271,
     "model": "claude-opus-5-5",
     "effort": "high",
     "tilefoundry_commit": None,
@@ -53,7 +52,6 @@ class Config:
     no_proxy: str
     upstream: str
     fork_owner: str | None
-    tracker: int
     model: str
     effort: str
     tilefoundry_commit: str | None
@@ -87,9 +85,7 @@ def _coerce(name: str, value: Any) -> Any:
         return None if DEFAULTS[name] is None else DEFAULTS[name]
     if name in PATHS:
         return Path(str(value)).expanduser()
-    if name == "gpu":
-        return int(value)
-    if name in {"tracker", "max_rounds"}:
+    if name in {"gpu", "max_rounds"}:
         return int(value)
     if name == "gpu_exclude":
         if isinstance(value, str):

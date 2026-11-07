@@ -1,4 +1,4 @@
-"""`topa round`: start, steer, inspect and stop one agent working one issue.
+"""`topa round`: start, steer, inspect and stop one agent working one op.
 
 A round owns five things: a TileOPs worktree on its own branch, a herdr workspace
 whose pane runs the agent, a detached TileFoundry checkout, a container with one
@@ -18,11 +18,10 @@ import time
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
-from topa import container, foundry, ledger, sh
+from topa import container, foundry, ledger, sh, wiki
 from topa.config import Config
-from topa.issue import Issue, branch_name, op_family, round_slug
 
 PROMPT = ("Read `brief.md` in the current working directory and complete it. A human may "
           "reach you with `topa round say {slug} \"...\"`; treat that as a new instruction.")
@@ -52,6 +51,20 @@ def render(template: str, values: dict[str, Any]) -> str:
     if missing:
         raise SystemExit(f"brief placeholders without a value: {', '.join(missing)}")
     return PLACEHOLDER.sub(lambda match: str(values[match.group(1)]), template)
+
+
+def round_slug(op: str, earlier: Iterable[dict[str, Any]]) -> str:
+    """`<op>-r<k>`: the op in lower case without its `Op` suffix, k one past the slugs taken.
+
+    The stem is cut to 26 characters so the slug fits herdr's agent names,
+    `[a-z][a-z0-9_-]{0,31}`.
+    """
+    stem = op.lower().removesuffix("op")[:26]
+    taken = {view["round"] for view in earlier}
+    k = 1
+    while f"{stem}-r{k}" in taken:
+        k += 1
+    return f"{stem}-r{k}"
 
 
 # --- finding a round ---------------------------------------------------------------
@@ -192,34 +205,35 @@ def _environment(meta: dict[str, Any], warning: str | None, mismatched: list[str
     return "\n".join(lines) + "\n"
 
 
-def start(config: Config, number: int, *, dry_run: bool = False, force: bool = False) -> dict[str, Any]:
-    sh.require("claude", "docker", "gh", "git", "herdr", "ssh", "ssh-keygen", "nvidia-smi")
-    views = ledger.rounds()
-    live = [view["round"] for view in views.values() if view["state"] in ledger.LIVE]
-    if len(live) >= config.max_rounds and not force:
-        raise SystemExit(f"{len(live)} rounds are live ({', '.join(live)}); max_rounds is "
-                         f"{config.max_rounds}. Stop one, or pass --force.")
-    issue = Issue.fetch(config, number)
-    if issue.state != "open":
-        raise SystemExit(f"#{number} is {issue.state}")
-    for view in views.values():
-        if view.get("issue") == number and view["state"] in ledger.LIVE:
-            raise SystemExit(f"round {view['round']} already works #{number}")
-    slug = round_slug(number, views.values())
+def start(config: Config, name: str, *, page: wiki.Page | None = None, dry_run: bool = False,
+          force: bool = False) -> dict[str, Any]:
+    """Start a round on the op *name* of the wiki queue: the newest page unless *page* is given."""
+    sh.require("claude", "codex", "docker", "gh", "git", "herdr", "ssh", "ssh-keygen", "nvidia-smi")
+    page = page or wiki.fetch(config)
+    op = page.op(name)
     remote = sh.github_remote(config.tileops_repo, config.upstream)
-    branch = branch_name(issue, slug, op_family(config.tileops_repo, f"{remote}/main", issue.title))
-    worktree = config.worktree_root / f"tileops-{slug}"
-    round_dir = config.rounds / slug
     topa = topa_binary()
-    plan = {"round": slug, "issue": number, "title": issue.title, "branch": branch,
-            "worktree": str(worktree), "round_dir": str(round_dir)}
-    if dry_run:
-        return plan
-    if round_dir.exists() or worktree.exists():
-        raise SystemExit(f"{round_dir} or {worktree} already exists")
-
-    ledger.append("create", round=slug, issue=number, issue_url=issue.url, title=issue.title,
-                  branch=branch, worktree=str(worktree), round_dir=str(round_dir))
+    with ledger.claim():
+        views = ledger.rounds()
+        live = [view["round"] for view in views.values() if view["state"] in ledger.LIVE]
+        if len(live) >= config.max_rounds and not force:
+            raise SystemExit(f"{len(live)} rounds are live ({', '.join(live)}); max_rounds is "
+                             f"{config.max_rounds}. Stop one, or pass --force.")
+        for view in views.values():
+            if view.get("op") == name and view["state"] in ledger.LIVE:
+                raise SystemExit(f"round {view['round']} already works {name}")
+        slug = round_slug(name, views.values())
+        branch = f"perf/{(op.category or 'ops').replace('_', '-')}/{slug}"
+        worktree = config.worktree_root / f"tileops-{slug}"
+        round_dir = config.rounds / slug
+        plan = {"round": slug, "op": name, "wiki": page.url, "nightly_commit": page.commit,
+                "workloads": [row.workload for row in op.rows], "branch": branch,
+                "worktree": str(worktree), "round_dir": str(round_dir)}
+        if dry_run:
+            return plan
+        if round_dir.exists() or worktree.exists():
+            raise SystemExit(f"{round_dir} or {worktree} already exists")
+        ledger.append("create", **plan)
     try:
         sh.bootstrap_docker(config)
         sh.note(f"fetching {remote}/main")
@@ -239,8 +253,9 @@ def start(config: Config, number: int, *, dry_run: bool = False, force: bool = F
         ledger.append("foundry", round=slug, foundry_source=str(source), tilefoundry_base=prepared.commit)
 
         values = {
-            "SLUG": slug, "ISSUE": number, "ISSUE_URL": issue.url, "ISSUE_TITLE": issue.title,
-            "UPSTREAM": config.upstream, "BRANCH": branch, "TILEOPS_BASE": tileops_base,
+            "SLUG": slug, "OP": name, "WIKI_URL": page.url, "NIGHTLY_DATE": page.date,
+            "NIGHTLY_RUN": page.run_id, "NIGHTLY_RUN_URL": page.run_url, "NIGHTLY_COMMIT": page.commit, "BENCHMARK": op.benchmark,
+            "ROWS": op.table(), "UPSTREAM": config.upstream, "BRANCH": branch, "TILEOPS_BASE": tileops_base,
             "TILEOPS_WORKTREE": worktree, "TILEFOUNDRY_BASE": prepared.commit,
             "TILEFOUNDRY_SOURCE": source, "KNOWLEDGE": knowledge(), "TOPA": topa,
         }
@@ -255,7 +270,7 @@ def start(config: Config, number: int, *, dry_run: bool = False, force: bool = F
         for item in prepared.report["mismatched"]:
             sh.note(f"warning: kept {item}")
         meta = {
-            **plan, "issue_url": issue.url, "upstream": config.upstream,
+            **plan, "upstream": config.upstream,
             "tileops_base": tileops_base, "tilefoundry_base": prepared.commit,
             "foundry_source": str(source), "container": started.name, "alias": started.alias,
             "gpu": started.gpu, "image": started.image, "workspace": workspace, "pane": pane,
@@ -302,12 +317,11 @@ def say(config: Config, slug: str, text: str) -> bool:
 
 
 def pull_request(config: Config, branch: str) -> dict[str, Any] | None:
-    try:
-        rows = sh.gh_json("pr", "list", "--repo", config.upstream, "--head", branch, "--state", "all",
-                          "--limit", "1", "--json", "number,state,url")
-    except sh.CommandError:
-        return None
-    return rows[0] if rows else None
+    """The newest PR from *branch* of the fork; another fork can use the same branch name."""
+    owner = (config.fork_owner or sh.gh_login()).lower()
+    rows = sh.gh_json("pr", "list", "--repo", config.upstream, "--head", branch, "--state", "all",
+                      "--json", "number,state,url,mergeCommit,headRepositoryOwner")
+    return next((row for row in rows or [] if row["headRepositoryOwner"]["login"].lower() == owner), None)
 
 
 def status(config: Config, *, every: bool = False) -> list[dict[str, Any]]:
@@ -320,9 +334,12 @@ def status(config: Config, *, every: bool = False) -> list[dict[str, Any]]:
         if view["state"] == "removed" and not every:
             continue
         agent = agents.get(view.get("pane", ""))
-        pr = pull_request(config, view["branch"]) if view.get("branch") else None
+        try:
+            pr = pull_request(config, view["branch"]) if view.get("branch") else None
+        except sh.CommandError:
+            pr = None
         rows.append({
-            "round": view["round"], "state": view["state"], "issue": view.get("issue"),
+            "round": view["round"], "state": view["state"], "op": view.get("op"),
             "branch": view.get("branch"), "gpu": view.get("gpu"), "pane": view.get("pane"),
             "agent": agent.get("agent_status") if agent else None,
             "pr": pr, "updated": view.get("updated"),

@@ -1,204 +1,243 @@
-# {{SLUG}}: {{ISSUE_TITLE}}
+# {{SLUG}}: bring {{OP}} to its fastest comparator
 
-This round contributes one GPU kernel to the open-source operator library
-[tile-ai/TileOPs](https://github.com/tile-ai/TileOPs). You implement or optimize one
-operator as a public issue describes it, verify its numbers against the reference in the
-repository, compare its performance with public implementations, and open a PR that
-follows the upstream rules. The code, the evidence and the PR all go into public
-repositories. The tool is [tile-ai/TileFoundry](https://github.com/tile-ai/TileFoundry), an
-open-source compiler front end that analyzes the cost of tensor programs, selects hardware
-instructions and lowers to TIR.
+Make `{{OP}}` of [tile-ai/TileOPs](https://github.com/tile-ai/TileOPs) at least as fast as
+its fastest comparator, using [TileFoundry](https://github.com/tile-ai/TileFoundry), and
+open a PR from the fork. The code, the PR and any TileFoundry issue are public.
 
-**Use TileFoundry for the whole round. Write, analyze and measure several different
-Sharded/Placed HIRs. Derive the structural change of the production kernel from the HIR
-you keep, and put that HIR in the PR unchanged. Do not open a PR for a change that only
-tunes config, launch, tile size or stages. When a TileFoundry limit blocks you, record a
-finding and continue with the part of the workflow that still runs. Do not write an
-implementation that goes around TileFoundry, and do not stop. Keep a blocking example as a
-minimal reproducer exactly as it fails. Do not reduce it until it passes.**
+## Requirement
 
-The requirement of this round is [{{UPSTREAM}}#{{ISSUE}}]({{ISSUE_URL}}), and it is the only
-source. Before you start, read its body with `gh issue view {{ISSUE}} --repo {{UPSTREAM}}`
-and all its comments with `gh issue view {{ISSUE}} --repo {{UPSTREAM}} --comments` (without a
-terminal, `--comments` prints the comments only). The goal, the acceptance line, the
-comparison implementations and the code locations are what the issue says.
+The rows of `{{OP}}` behind in the [Perf Tracker of {{NIGHTLY_DATE}}]({{WIKI_URL}}) (nightly
+run [{{NIGHTLY_RUN}}]({{NIGHTLY_RUN_URL}}), commit `{{NIGHTLY_COMMIT}}`, benchmark
+`{{BENCHMARK}}`; CUPTI `device_busy_ms` in microseconds; ratio = comparator / TileOPs):
+
+{{ROWS}}
+
+- Take these rows and the op's manifest entry, Op, workloads, reference, tests and
+  benchmark as the whole requirement.
+- Hold every row of the op to the bar, not only the rows above.
+- Write production code only in the worktree; keep everything else in the current
+  directory, the round directory.
 
 | Environment | Value |
 | --- | --- |
-| issue | [#{{ISSUE}}]({{ISSUE_URL}}) |
 | branch | `{{BRANCH}}` |
 | TileOPs base | `{{TILEOPS_BASE}}` |
+| TileOPs worktree | `{{TILEOPS_WORKTREE}}` |
 | TileFoundry base | `{{TILEFOUNDRY_BASE}}` |
+| TileFoundry source (read-only) | `{{TILEFOUNDRY_SOURCE}}` |
 
-## Workflow
+## The bar
 
-1. Read every page that `tilefoundry tutorial` lists. Get the real contract from the
-   manifest, the Op, the workloads, the reference, the tests and the benchmark. Do not read
-   the incumbent kernel body until your first production runtime twin is correct. Before
-   you write the production kernel, read `{{KNOWLEDGE}}`: it lists TileLang and ptxas
-   problems that earlier rounds hit on named builds, with workarounds.
-2. The runtime twin must call the production TileLang kernel you will submit, and it must
-   pass `tilefoundry check`. Torch, an evaluator or a detached implementation does not
-   count.
-3. Measure at least 10 different Sharded/Placed HIRs. For each, keep the raw
-   `tilefoundry analyze` JSON, the placement, the hypothesis, the latency and the
-   kept/rejected verdict. Select the final HIR from that evidence.
-4. When the final HIR is fixed, fix its instruction choices with schedule:
-   - `tilefoundry schedule candidates` lists the instructions available at each
-     unscheduled point.
-   - `tilefoundry schedule facts --target` gives the constraints of the target on the
-     selected instructions.
-   - Write the choices in the HIR with `tf.schedule`.
-   - `tilefoundry schedule finalize` lowers it to TIR.
-   - `tilefoundry spec schedule` defines the authored form.
-5. Write the production kernel from that TIR. Do not invent instructions, buffer depths or
-   operand layouts. Then run correctness, the benchmark of every primary workload, the
-   strongest external baseline that runs, and a profile again.
+| Result | When | Do |
+| --- | --- | --- |
+| `bar met` | Every row of the op beats its fastest comparable comparator in the median and in every repeat, or ties it within one timer step or at the DRAM floor; no row of any op is slower than main. | Open the PR. |
+| `below bar` | The bar is not met, the candidate beats main on a row behind, and no row of any op is slower than main. | Open the PR; list the unmet rows in Result And Limitations. |
+| none | Neither, or a person must decide. | Follow [Ending without a PR](#ending-without-a-pr). |
 
-The current directory is the round directory. Write production code only in
-`{{TILEOPS_WORKTREE}}`.
+"Any op" includes every op that shares a kernel the round changes.
 
-- Run commands directly. TileOPs is installed in editable mode, so do not set
-  `PYTHONPATH`.
-- Do not change the public Op, the manifest, the workloads, the reference, the benchmark
-  or the evaluation path. For a new operator you may add its own entry under
-  `src/tileops/manifest/spec/`, but do not change existing entries.
-- When the operator of the issue already has a `spec-only` entry and an Op with no
-  kernel, make exactly these changes to them: register your kernel in the Op's
-  `kernel_types` and its interface in `interfaces`, set the entry's `status` to
-  `implemented`, and register the Op in `tests/ops/test_compile_boundary.py`. The tests
-  and the benchmark skip while the Op has no kernel and run after you register it.
-- C++/CUDA that TileLang cannot generate, or that you write or rewrite by hand, goes in
-  `src/tileops/csrc/`. The kernel includes it with `tileops._csrc.csrc_include(...)`, like
-  the existing `fp8_gqa_helper.h`.
-- A `.py` file must not contain C++/CUDA source strings (`import_source(`, `prelude =`,
-  `asm(`, `__device__` / `__global__`). The TileOPs pre-commit hook
-  `native-source-strings-in-csrc` rejects them, and files in csrc must pass clang-format.
+## Rules
+
+- Keep main's cache hints and launch policy exactly (`evict_first`, `evict_last`, cache
+  modifiers, L2 persistence, PDL).
+- Do not defer writes, add GPU sleeps, or take a win only the L2 flush state gives.
+- Do not branch on a shape; derive each dispatch rule from hardware and call facts, sweep it
+  over the workloads, and cover it with a test.
+- Do not change the benchmark, its timing, the comparators, tolerances, workloads, the
+  manifest or the public Op.
+- Add no op and no compatibility shim; migrate every caller in the same PR.
+- Fix shared code with one rule for every op, never a list of ops or shapes.
+- Fix a bug in main found on the way in this PR, with a test.
+- Prove each new test by mutation in a snapshot no timing run compiles from. Why: TileLang
+  re-reads kernel source at compile time.
+- Follow `docs/design/` and `docs/code-style.md` of TileOPs.
+- Never change the TileFoundry source or open a PR on `tile-ai/TileFoundry`.
 
 ## Where commands run
 
-You run on the host, and you read and write files locally. Each shell command goes to the
-round container automatically. `git`, `gh`, `topa`, plain file commands and text tools
-(`grep`, `head`, `tail`, `echo`, ...) stay on the host. A line that runs anything else
-(python, pytest, nvcc, tilefoundry, nvidia-smi) runs in the container as a whole. The
-three directories have the same paths in the container, under both the written and the
-resolved spelling of a symlinked home, so use paths as they are. Do not write `ssh` or
-`docker` commands yourself.
+- Lines that run only `git`, `gh`, `codex`, `topa`, file commands or text tools run on the
+  host; every other line runs in the round container, at the same paths.
+- Do not write `ssh` or `docker` commands.
 
-## TileFoundry source
+## Stages
 
-`{{TILEFOUNDRY_SOURCE}}` is a detached checkout of TileFoundry at base
-`{{TILEFOUNDRY_BASE}}`. The `tilefoundry` in the container is its editable install.
-`tilefoundry tutorial`, `spec` and `tests/nvidia/cuda/fixtures/schedule/` read this source.
+Read every page of `tilefoundry tutorial` before stage 1, and `{{KNOWLEDGE}}` before
+stage 3. Ask TileFoundry usage from `tilefoundry tutorial`, `spec` and `--help`. Cite
+`tilefoundry --version` and the target name with every analysis number.
 
-This source is read-only. Read it and run it. Do not change it, and do not open a PR on
-`tile-ai/TileFoundry`. Record a TileFoundry bug that blocks you as a finding, and go
-around it as the rule at the top says. Keep its minimal reproducer unchanged in
-`work/blocked/<finding-id>/` and record it in `findings.json`.
+### 1. Requirement and comparators
 
-**Report all findings of the round in one issue** on `tile-ai/TileFoundry`.
+1. Locate the gap: kernel body, tuning pick, launch count or host idle time, with CUPTI
+   per-kernel times and `ncu`.
+2. Run each comparator through the repository benchmark with its recommended settings.
+3. Classify each (workload, comparator) pair:
 
-- Open it once, after the last finding and before the TileOPs PR. Write its URL in the
-  `issue` field of `findings.json`.
-- Give each finding one section. Paste the command, the minimal HIR or TIR and the raw
-  output unchanged. The round directory is not public, so the issue alone must reproduce
-  each finding.
-- Add a later finding to the body of the same issue. Do not open a second one. With no
-  finding, open no issue.
+| Class | Timed | Counts toward the fastest comparator |
+| --- | --- | --- |
+| comparable (passes the shared case reference) | yes | yes |
+| not semantically comparable; reason recorded | yes | no |
+| cannot express the case; reason recorded | no | no |
 
-**Before you open the issue, read `{{TILEFOUNDRY_SOURCE}}/CONTRIBUTING.md`.** It sets the
-title format and the body sections of the issue. It is not in your working directory, so
-it does not come into your context by itself.
+4. List the last two classes in Result And Limitations.
 
-If the round ends with a `foundry.patch`, the round changed TileFoundry source and broke
-the rule above. The deliverable is the TileOPs operator. TileFoundry is the tool that
-writes it.
+Exit: every pair is classified, and the comparator each row names is comparable. Otherwise
+follow [Ending without a PR](#ending-without-a-pr).
 
-## Round deliverables
+### 2. HIR reference
 
-- `work/final_hir.py` (the version with `tf.schedule`), `work/runtime_twin.py`, and at least
-  one candidate HIR with a different placement.
-- The TIR from `schedule finalize`, and the raw candidates and facts reports.
-- `provenance.json`: the bases, the classification, the final/runtime/kernel paths, check,
-  iterations, decisions, correctness, benchmark and profile.
-- For each iteration: the analyze JSON, a positive `measured_ms`, the placement, the
-  hypothesis and the verdict.
-- `findings.json`. With no finding: `{"findings": [], "issue": null}`. With findings,
-  `issue` is the URL of the one TileFoundry issue. The `reproducer` of each finding points
-  to the minimal HIR or TIR file in `work/blocked/<finding-id>/` that runs by itself. The
-  same directory holds the exact command and its raw output.
-- The raw correctness, benchmark, profile and baseline evidence, `report.md`, and
-  `pr-template.md` filled in.
+1. Write the op's math in HIR, one module per workload or with `--dim`.
+2. Save the repository reference's outputs on the same inputs as `.pt`.
+3. Run `tilefoundry check <hir>.py:<Module> --inputs files:<in> --expected <out> --json <report>`
+   with a two-sided `--fn` and `nan_inf` per output; add `--weights ckpt:<dir>` for
+   `ConstTensor` weights.
+4. Derive each tolerance from the dtype and the serial roundings, and record it. Never
+   loosen one for a single workload.
 
-When the round confirms a TileLang or ptxas fact that the next round would otherwise have
-to find again (a trap, a convention read from generated code, a form that does not exist),
-write it in the `## TileLang knowledge` section of `report.md`: what you did, the result,
-and the build. Do not change `{{KNOWLEDGE}}`. A person adds entries to it.
+Exit: the check passes on every output of every workload.
 
-Experiment scripts and evidence stay in the round directory. Only the production diff goes
-in the TileOPs worktree.
+### 3. Floor and placement
 
-## PR
+1. Run `tilefoundry analyze <hir>.py:<Module> <report> --compute-cost --memory --roofline --json`
+   per workload; `ideal-ns` and `bound-by` are its floor.
+2. Check the flops and traffic by hand (each input read once, each output written once);
+   fix the HIR if they disagree.
+3. List placements, including the incumbent's and the fastest comparator's (from `ncu` and
+   its generated source). Run `analyze ... --memory --performance --json` on each and choose
+   one by waves, storage use and predicted time.
 
-Open a performance PR only when all of these are true: the candidate passes correctness,
-every primary workload is compared under the same contract, the candidate is better than
-the incumbent, and the production kernel has a structural change. Otherwise record
-`no improvement` in `report.md`, and do not open or keep a PR.
+Exit: a floor table and a placement table exist.
 
-A round that adds a new operator has no incumbent. Compare against the reference for
-correctness and against the strongest external baseline that runs for performance. Remove
-the incumbent column from the Performance table. Open the PR when correctness passes and
-the candidate is not slower than the baseline. If it is slower, record `no improvement`
-and open no PR.
+### 4. Implementation rounds
 
-Use this form for the commit title, and for the PR title on the first line of
-`pr-template.md`:
+Run each round in this order and add it to `iterations` in `provenance.json`:
 
-```text
-[Perf][foundry][<Scope>] <Imperative description of the kernel change>
+1. Change the HIR's placement or schedule and run `analyze`. Continue only with a better
+   prediction or a written basis.
+2. Run `tilefoundry schedule candidates`, `schedule facts --target <target> <instruction>`,
+   write the choices into `tf.schedule`, and run `schedule finalize` to get TIR.
+3. Write the TileLang kernel from that TIR.
+4. Re-run the stage 2 check if the math, outputs or shapes changed. Run
+   `tilefoundry check <twin>.py:<Twin> --json <report>` on the runtime twin, which calls the
+   production kernel, and the TileOPs tests.
+5. Measure, and record measured / floor, measured / predicted and comparator / measured.
+
+Measure this way:
+
+- Make detached snapshots under `work/` of the base and of each candidate commit with
+  `git -C {{TILEOPS_WORKTREE}} worktree add --detach`, and time each with its `src` first on
+  `PYTHONPATH`.
+- Alternate main, candidate and comparators on the round's GPU, with the L2 flush, and take
+  the median of at least three runs of `device_busy_ms`.
+- Skip re-timing when the generated CUDA is identical.
+
+Stop optimizing when all three hold:
+
+| Record | Holds when |
+| --- | --- |
+| (1) Gap attribution | Each workload's measured / floor is listed, and each gap is tied to a bottleneck with `ncu` or `analyze` data. |
+| (2) Directions exhausted | Each feasible change against each bottleneck was measured or shown infeasible. |
+| (3) TileFoundry consulted | Alternative placements were analyzed and `tutorial optimize` and `spec` were read, without a new direction. |
+
+Exit: the bar is met, or all three records hold.
+
+### 5. Review
+
+1. Run Codex on the diff (`git -C {{TILEOPS_WORKTREE}} diff {{TILEOPS_BASE}}`), the rows and
+   the paths of TileOPs `docs/design/` and `docs/code-style.md`, without your conclusions:
+
+   ```bash
+   codex exec -C {{TILEOPS_WORKTREE}} --sandbox read-only "<prompt>" < /dev/null > evidence/review-<n>.md 2>&1
+   ```
+
+2. Ask for correctness (edge shapes, dtypes, tails), the real call path, branch coverage by
+   tests, a trustworthy benchmark, and hotfixes: a loosened tolerance, check or skipped
+   case, logic only tests reach, or a shape branch without a stated rule and a test.
+3. Fix each finding you agree with; answer the rest with a test, a measurement or a rule.
+4. Rerun until no finding is blocking or major. Rerun a review that ends in an error.
+
+Exit: no blocking or major finding is left. A disagreement that survives two reviews ends
+the round: follow [Ending without a PR](#ending-without-a-pr).
+
+### 6. Cleanup
+
+1. Inline single-caller helpers, merge repeated logic, and delete process comments and
+   tests of intermediate steps.
+2. Pass `pre-commit run --all-files`.
+3. Rerun the affected tests on the GPU, `scripts/validate_manifest.py`, the benchmark and
+   the stage 3 analyses on the final commit.
+4. Repeat stage 5 if the cleanup changed kernel logic, dispatch, tests or a performance
+   number.
+
+Exit: every rerun passes and matches the numbers before the cleanup.
+
+### 7. PR
+
+1. Rebase onto the newest `{{UPSTREAM}}` main, verify again, and check
+   `git merge-tree --write-tree <upstream remote>/main HEAD`.
+2. Title the commit and the PR `[Perf][foundry][<Family>] <imperative description>`, with
+   no authorship trailer.
+3. Fill in both files in place; replace every `<...>` and keep every heading and column:
+
+| File | Becomes | Holds |
+| --- | --- | --- |
+| `pr-template.md` | the title (line 1) and the body | Summary, Test plan, Test node delta (`scripts/test_node_delta.py` output and the path each new case guards), Benchmark |
+| `pr-comments.md` | one comment per `## ` section | TileFoundry Description with `work/final_hir.py` verbatim, Performance with every workload and a `main (us)` column, Result And Limitations opening with the result, TileFoundry Findings |
+
+4. Leave out derivations, trial and error, reproducer commands, internal file names, logs
+   and local paths.
+5. Run `{{TOPA}} pr`, re-read the final HIR, the evidence and the diff, then run
+   `{{TOPA}} pr --reviewed`. Never use `gh pr create`, `gh pr edit` or merge.
+6. Report the PR link and stay in this session for CI and review. After a base move,
+   rebase, verify, push with `--force-with-lease` and run `{{TOPA}} pr --reviewed` again.
+
+Exit: the PR is open and its link is reported.
+
+## Ending without a PR
+
+1. Write `## Stop records` in `report.md`: the three records of stage 4, the rows still
+   behind with final numbers, and both sides' evidence for a decision.
+2. Close any PR this round opened, with a comment saying why.
+3. Report the stop and stay in this session.
+
+## TileFoundry findings
+
+- Record a TileFoundry bug that blocks you as a finding, and continue with what still runs.
+- Keep its reproducer as it fails, with the command and raw output, in
+  `work/blocked/<finding-id>/`.
+- Before the PR, open one issue on `tile-ai/TileFoundry` for all findings, in the form
+  `{{TILEFOUNDRY_SOURCE}}/CONTRIBUTING.md` sets, one section per finding with its command,
+  minimal HIR or TIR and raw output. Open none without a finding.
+
+## Records
+
+`{{TOPA}} gate` checks these. Paths are relative to the round directory; each `command` is
+the exact command that wrote its non-empty `report`.
+
+```json
+{
+  "tileops_base": "<40-hex>", "tilefoundry_base": "<40-hex>", "result": "bar met | below bar",
+  "final_hir": "work/final_hir.py", "runtime_twin": "work/runtime_twin.py",
+  "production_kernel": "src/tileops/<path>.py:<Symbol>",
+  "reference_check": {"command": "tilefoundry check ... --expected ... --json <r>", "report": "<r>"},
+  "floor": [{"workload": "<name>", "command": "tilefoundry analyze ... --roofline --json", "report": "<r>"}],
+  "placements": [{"placement": "<tiling>", "chosen": true, "command": "tilefoundry analyze ... --performance --json", "report": "<r>"}],
+  "schedule": {"command": "tilefoundry schedule finalize ...", "report": "<tir>"},
+  "twin_check": {"command": "tilefoundry check work/runtime_twin.py:<Twin> ... --json <r>", "report": "<r>"},
+  "iterations": [{"change": "<what>", "basis": "<fact>", "predicted_us": 0.0, "measured_us": 0.0}],
+  "tests": {"command": "<pytest>", "report": "<r>"}, "benchmark": {"command": "<bench>", "report": "<r>"},
+  "reviews": ["evidence/review-1.md"]
+}
 ```
 
-After the commit, run `{{TOPA}} pr`.
+- Give `floor` one entry per workload and `placements` at least two, one chosen.
+- Write `findings.json` as `{"findings": [], "issue": null}`, or with the issue URL and per
+  finding `id`, `classification`, `command`, `expected`, `actual`, `workaround_cost`,
+  `public_surface`, `affected_workloads` and `reproducer`.
+- Expect the gate to reject a Performance table that lacks a row behind or a ratio column,
+  shows a candidate slower than main, or claims `bar met` with a ratio below 0.99.
 
-- The first call runs the artifact gate and stops for a semantic self-check. Read the
-  actual final HIR, the analyze and measurement evidence and the production diff again,
-  and only then run the second command.
-- To check the artifacts only, run `{{TOPA}} gate`.
-- Do not call `gh pr create` or `gh pr edit` to go around it.
-- Use the global Git identity and add no other authorship. `topa pr` pushes to the fork
-  and opens the PR. Do not merge. Continue to handle CI and review.
+## Report
 
-```bash
-{{TOPA}} pr
-{{TOPA}} pr --reviewed
-```
-
-When the base moves, rebase, verify again and push with `--force-with-lease`. With
-findings, put the link to the TileFoundry issue in `report.md`.
-
-When the TileOPs PR is open, stop and report its link (and the issue link, if there are
-findings). Do not end the round yourself. The container, the worktree and this session
-stay, and you follow CI and review in this session.
-
-### PR text
-
-`pr-template.md` in the round directory is the PR. Its first line, `# <title>`, is the
-title, and the rest is the body. Fill it in where it is; `topa pr` reads the title and the
-body from it.
-
-- Replace every `<...>` placeholder. Keep every heading, fixed line, table row name and
-  column.
-- Put `work/final_hir.py` in the TileFoundry Description block character for character.
-- For more than one public Op, repeat the block from `Operator:` to its `geometric mean`
-  row once for each Op.
-- For a new operator, delete the incumbent column: its header, its separator cell and its
-  cell in every row.
-- `topa gate` and `topa pr` check the title form, the four sections in order, that no
-  placeholder is left, the final HIR, each `Operator:` block (the environment rows, the
-  image digest, `Method:`, the ratio line, a results table with a marker in every row and a
-  `geometric mean` row), and that the bold classification line is the `classification` of
-  `provenance.json`.
-
-The public title and body do not contain correctness or reproducer commands, internal file
-names or logs, or local absolute paths. They do not claim SOTA, generality or provenance
-that measurements do not support. That evidence stays in the round directory.
+Write `report.md`. Under `## TileLang knowledge`, record each TileLang or ptxas fact the
+next round would otherwise rediscover: what you did, the result, the build. Do not edit
+`{{KNOWLEDGE}}`.

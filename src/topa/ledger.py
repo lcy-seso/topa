@@ -2,11 +2,12 @@
 
 One JSON object per line, each an event with a timestamp. A round's state is what
 its events say in order; nothing is rewritten. Writers take an exclusive lock, so
-`topa hunt` and a person driving rounds by hand can both append at once.
+several topa commands can append at once.
 """
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import fcntl
 import json
@@ -46,6 +47,15 @@ def append(event: str, path: Path | None = None, **fields: Any) -> dict[str, Any
     return record
 
 
+@contextlib.contextmanager
+def claim() -> Iterator[None]:
+    """Hold while checking the ledger and appending what the check allows, such as a new round."""
+    LEDGER.parent.mkdir(parents=True, exist_ok=True)
+    with (LEDGER.parent / "claim.lock").open("w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
 def events(path: Path | None = None) -> Iterator[dict[str, Any]]:
     path = path or LEDGER
     if not path.is_file():
@@ -79,3 +89,4 @@ def rounds(path: Path | None = None) -> dict[str, dict[str, Any]]:
             if key not in {"ts", "event", "text"}:
                 view[key] = value
     return folded
+

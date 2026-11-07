@@ -21,9 +21,8 @@ mkdir -p ~/.topa && topa config --default > ~/.topa/config.toml   # then set the
 topa setup
 herdr server &             # agents run in herdr panes
 
-topa hunt                  # ops TileOPs is behind on, from the newest nightly
-topa issue new <Op>        # file or claim the op's issue
-topa round start <issue>   # one agent, one GPU, one issue
+topa hunt                  # the newest nightly's queue of ops behind, from the TileOPs wiki
+topa round start <Op>      # one agent, one GPU, one op
 topa round status          # every round, its agent and its PR
 ```
 
@@ -32,6 +31,6 @@ topa round status          # every round, its agent and its PR
 ## Docs
 
 - [Getting started](docs/usage.md): from a new machine to a first round
-- [How a round works](docs/workflow.md): the loop, from the nightly benchmark to a PR
+- [How a round works](docs/workflow.md): the loop, from the nightly's queue to a PR
 - [Commands](docs/commands.md): every `topa` command
 - [Layout](docs/layout.md): the repository, and what topa keeps on the machine
