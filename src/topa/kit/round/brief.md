@@ -89,7 +89,7 @@ resolved spelling of a symlinked home, so use paths as they are. Do not write `s
 
 `{{TILEFOUNDRY_SOURCE}}` is a detached checkout of TileFoundry at base
 `{{TILEFOUNDRY_BASE}}`. The `tilefoundry` in the container is its editable install.
-`tilefoundry tutorial`, `spec` and `tests/fixtures/schedule/` read this source.
+`tilefoundry tutorial`, `spec` and `tests/nvidia/cuda/fixtures/schedule/` read this source.
 
 This source is read-only. Read it and run it. Do not change it, and do not open a PR on
 `tile-ai/TileFoundry`. Record a TileFoundry bug that blocks you as a finding, and go

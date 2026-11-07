@@ -97,6 +97,21 @@ def _agent(pane: str) -> dict[str, Any]:
         return {}
 
 
+def wait_ready(pane: str, *, timeout: float = 60.0, settle: float = 2.0) -> bool:
+    """Wait until Claude Code in *pane* takes input.
+
+    `herdr agent start` returns once it detects the agent, while Claude Code may still
+    be drawing its first screen; a prompt pasted then is dropped.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _agent(pane).get("interactive_ready"):
+            time.sleep(settle)
+            return True
+        time.sleep(0.5)
+    return False
+
+
 def submit(pane: str, text: str, *, tries: int = 3, settle: float = 1.5) -> bool:
     """Submit a prompt and confirm a new turn started.
 
@@ -125,11 +140,16 @@ def submit(pane: str, text: str, *, tries: int = 3, settle: float = 1.5) -> bool
     return False
 
 
+# A herdr server started from inside Claude Code hands its CLAUDE* variables to every
+# pane. The agent then counts as a child session of that one and saves no transcript.
+CLEAR_CLAUDE_ENV = "for v in $(env | sed -n 's/^\\(CLAUDE[A-Za-z0-9_]*\\)=.*/\\1/p'); do unset \"$v\"; done"
+
+
 def _cd_pane(pane: str, path: Path) -> None:
     marker = f"topa-ready-{time.time_ns()}"
     half = len(marker) // 2
     sh.herdr("pane", "run", pane,
-             f"cd {shlex.quote(str(path))} && printf '%s%s\\n' {marker[:half]} {marker[half:]}")
+             f"{CLEAR_CLAUDE_ENV}; cd {shlex.quote(str(path))} && printf '%s%s\\n' {marker[:half]} {marker[half:]}")
     sh.run(["herdr", "pane", "wait-output", pane, "--source", "recent-unwrapped",
             "--match", marker, "--timeout", "30000"])
 
@@ -250,6 +270,8 @@ def start(config: Config, number: int, *, dry_run: bool = False, force: bool = F
         _cd_pane(pane, round_dir)
         sh.herdr("agent", "start", slug, "--kind", "claude", "--pane", pane, "--timeout", "60000",
                  "--", "--dangerously-skip-permissions", "--model", config.model, "--effort", config.effort)
+        if not wait_ready(pane):
+            sh.note(f"{pane} did not report ready within 60 s; sending the brief anyway")
         confirmed = submit(pane, PROMPT.format(slug=slug))
     except BaseException as error:
         ledger.append("fail", round=slug, error=str(error).strip()[:2000])
@@ -356,6 +378,11 @@ def stop(config: Config, slug: str, *, remove: bool = False) -> list[str]:
         sh.herdr("agent", "send-keys", pane, "C-c", "C-c", check=False)
         time.sleep(1.5)
         done.append(f"stopped the agent in {pane}")
+
+    if meta.get("container"):
+        owned = [current.dir] + [Path(meta[key]) for key in ("worktree", "foundry_source") if meta.get(key)]
+        if container.give_back(config, meta["container"], owned):
+            done.append("gave the files the container wrote back to you")
 
     if current.dir.is_dir():
         count = archive_sessions(current.dir)
