@@ -8,37 +8,33 @@ Apply to every TileOPs PR. Rules TileOPs documents or checks in CI are cited, no
 | --- | --- |
 | the design doc each area is reviewed against | `CONTRIBUTING.md` § Design first |
 | title, branch and issue names | `CONTRIBUTING.md` § Naming, CI job `validate-pr-title` |
-| PR body sections | `.github/PULL_REQUEST_TEMPLATE.md` |
 | code rules a reader applies | `docs/code-style.md` |
 | public API compatibility | `docs/stability.md` § Compatibility, `scripts/ci/check_api_compat.py` in CI job `compile-contract-gate` |
 | lint, format, secrets, manifest validation | `.pre-commit-config.yaml` and the `Preflight Checks` workflow |
 
 - Do not comment on what a CI check of the PR reports.
 - Cite the source row when a finding breaks a rule from this table.
+- Name the failing criterion in the comment.
 
 ## Correctness
 
 | Criterion | Pass | Fail |
 | --- | --- | --- |
-| Oracle | the expected value comes from the workload's `ref_program`, PyTorch, NumPy or a closed form | a literal computed outside the test is the expected value |
-| Coverage set | the dtypes, shapes and modes the tests reach stay the same or grow | a case is removed while the code path it reaches stays |
-| New paths | each code path the diff adds is reached by a test whose input makes its output differ from every other path | an added path has no such test |
-
-- Name the failing criterion in the comment.
-- A path no input can tell apart from another passes `New paths` without a test.
+| Oracle | When an expected value is added or changed: it comes from `ref_program`, PyTorch, NumPy or a closed form | it is a literal computed elsewhere |
+| Reachable | each added function, branch or schedule runs on some call of a public op, a benchmark or a script | it runs only from a test, or never |
+| Tested | a test reaches each added path on an input where a fault there changes the asserted output | no test does |
+| Coverage kept | When a case is removed: every path, dtype and boundary still in the code stays reached by some case | one loses its last case |
 
 ## Code
 
 | Criterion | Pass | Fail |
 | --- | --- | --- |
-| Reachable | each function, class, branch and `__all__` name the diff adds outside `tests/` and `benchmarks/tests/` runs on some call of a public op, a benchmark or a script | it runs only when a test calls it directly, or never |
-| One copy | each run of five or more statements the diff adds has no copy elsewhere in the repository that differs only in names and literals | the diff adds such a copy instead of a shared helper or `@T.macro` |
-| Positional order | a parameter the diff adds to an existing function goes after its existing positional parameters, or is keyword-only | an added parameter shifts an existing positional parameter |
-| Reason in comments | a comment beside a chosen value (a tile size, a threshold, a stage count) states why the value holds | the comment gives only a measurement, a date or the history of the choice |
+| One copy | When five or more statements are added: no near-identical copy exists elsewhere | a copy is added instead of a shared helper or `@T.macro`; cite both |
+| Positional order | When a parameter is added to an existing function: it is last or keyword-only | it shifts an existing positional parameter |
+| Reason in comments | When a comment sits beside a chosen value: it says why the value holds | it gives only a measurement, a date or history |
 
 ## PR body
 
-- Check that the body has each section `.github/PULL_REQUEST_TEMPLATE.md` requires for what the diff touches.
 - Check each claim in `## Summary` against the diff.
-- Check that `## Summary` names each change to what an existing call returns or raises, and to the call or timing of an existing benchmark row.
+- Check that `## Summary` names each change to what an existing call returns, raises or times.
 - Apply the `FIXME(staged-rollout)` rule of `docs/code-style.md` to each `xfail`, `skip` or loosened assertion the diff adds.
