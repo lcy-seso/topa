@@ -36,7 +36,8 @@ mkdir -p ~/.topa && topa config --default > ~/.topa/config.toml
 ```
 
 Set `tileops_repo`, `tilefoundry_repo`, `worktree_root` and `fork_owner` in that file, and
-`gpu_exclude` to the cards topa must not use. Then:
+`gpu_exclude` to the cards topa must not use. A config file from an older topa fails to
+load until you delete its `tracker` line. Then:
 
 ```bash
 topa setup       # pulls the runner image and builds topa:agent

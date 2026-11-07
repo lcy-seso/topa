@@ -27,8 +27,8 @@ COMMENTS_FILE = "pr-comments.md"
 BODY_SECTIONS = ("Summary", "Test plan", "Test node delta", "Benchmark")
 COMMENT_SECTIONS = ("TileFoundry Description", "Performance", "Result And Limitations", "TileFoundry Findings")
 RESULTS = ("bar met", "below bar")
-# The Perf Tracker's line: a row whose comparator / TileOPs ratio is below it is behind. A
-# tie within one timer step or at the DRAM floor stays above it.
+# The Perf Tracker's line for a row behind. The gate holds `bar met` to it; whether a row
+# near it ties within a timer step or at the floor is for the review to judge.
 BEHIND = 0.99
 ENVIRONMENT_ROWS = ("image", "digest", "gpu", "timer")
 # A template placeholder: `<...>` outside code, except the HTML tags a PR may use; or a
@@ -174,11 +174,28 @@ def _time(value: object) -> float | None:
     return number if math.isfinite(number) and number > 0 and not isinstance(value, bool) else None
 
 
-def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, result: str) -> None:
-    """The environment, the method, and one row per workload, none of them slower than main.
+def _not_slower(table: list[list[str]], label: str) -> set[str]:
+    """The rows of *table* faster than main; a row slower than main, or without times, fails."""
+    main, candidate = table[0].index("main (us)"), table[0].index("candidate (us)")
+    faster = set()
+    for row in table[1:]:
+        name = " ".join(cell.strip("`") for cell in row[:label]) if label else row[0].strip("`")
+        times = [_time(row[i]) if i < len(row) else None for i in (main, candidate)]
+        if None in times:
+            raise GateError(f"Performance: row {name!r} needs positive times for main and candidate")
+        if times[1] > times[0]:
+            raise GateError(f"Performance: row {name!r} is slower than main")
+        if times[1] < times[0]:
+            faster.add(name)
+    return faster
 
-    A `bar met` result has no ratio below `BEHIND`. A `below bar` result ships only as an
-    improvement: some row behind beats main.
+
+def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, result: str) -> None:
+    """The environment, the method, one row per workload of the op, and no row slower than main.
+
+    The op's own table holds the bar: `bar met` has no ratio below `BEHIND`, and `below bar`
+    beats main on a row behind. Other ops that share a changed kernel only must not be
+    slower than main.
     """
     lines = text.splitlines()
     values = {row[0]: row[1].strip("`") for row in _table(lines, "| Environment |")[1:] if len(row) >= 2}
@@ -192,27 +209,21 @@ def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, 
     results = _table(lines, "| Workload |")
     if not results or not {"main (us)", "candidate (us)", "ratio"} <= set(results[0]):
         raise GateError("Performance: the results table needs main (us), candidate (us) and ratio columns")
-    main, candidate = results[0].index("main (us)"), results[0].index("candidate (us)")
-    ratios = [i for i, name in enumerate(results[0]) if name == "ratio"]
-    seen, faster = set(), set()
-    for row in results[1:]:
-        name = row[0].strip("`")
-        seen.add(name)
-        times = [_time(row[i]) if i < len(row) else None for i in (main, candidate)]
-        if None in times:
-            raise GateError(f"Performance: row {name!r} needs positive times for main and candidate")
-        if times[1] > times[0]:
-            raise GateError(f"Performance: row {name!r} is slower than main")
-        if times[1] < times[0]:
-            faster.add(name)
-        if result == "bar met" and any((_time(row[i]) if i < len(row) else None) is None
-                                       or _time(row[i]) < BEHIND for i in ratios):
-            raise GateError(f"Performance: row {name!r} is behind its comparator, so the bar is not met")
+    faster = _not_slower(results, 0)
+    others = _table(lines, "| Op | Workload |")
+    if others:
+        _not_slower(others, 2)
+    seen = {row[0].strip("`") for row in results[1:]}
     if not seen or len(seen) < measured:
         raise GateError(f"Performance: the results table has {len(seen)} rows; the op has {measured} measured rows")
     absent = [name for name in workloads if name not in seen]
     if absent:
         raise GateError(f"Performance: the results table lacks the rows behind {', '.join(absent)}")
+    ratios = [i for i, name in enumerate(results[0]) if name == "ratio"]
+    for row in results[1:]:
+        if result == "bar met" and any((_time(row[i]) if i < len(row) else None) is None
+                                       or _time(row[i]) < BEHIND for i in ratios):
+            raise GateError(f"Performance: row {row[0].strip('`')!r} is behind its comparator, so the bar is not met")
     if result == "below bar" and not faster & (set(workloads) or seen):
         raise GateError("Performance: a below bar result must beat main on a row behind")
 

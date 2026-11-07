@@ -144,6 +144,8 @@ class GateTests(unittest.TestCase):
                 "pr-comments.md", lambda t: t.replace("## TileFoundry Findings", "## Findings")),
             "full sha256": lambda: self.edit("pr-comments.md", lambda t: t.replace("a" * 64, "a" * 12)),
             "main \\(us\\)": lambda: self.edit("pr-comments.md", lambda t: t.replace("| main (us) ", "| ")),
+            "row 'OtherFwdOp w' is slower than main": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("| --- | --- | ---: | ---: |\n| 1 | 1 | 1 | 1 |", "| --- | --- | ---: | ---: |\n| OtherFwdOp | w | 1 | 2 |")),
             "the result of provenance.json": lambda: self.edit(
                 "pr-comments.md", lambda t: t.replace("**bar met**", "**below bar**")),
             "below bar result must beat main": lambda: (p.update(result="below bar"), self.edit(
@@ -226,6 +228,8 @@ class WikiTests(unittest.TestCase):
             "the line under the header": text.replace("| ---: | --- | --- | --- | ---: | ---: | ---: |", ""),
             "has ops the queue lacks: ReciprocalFwdOp": re.sub(r"\| 19 \| .*\n", "", text),
             "repeated '### DivFwdOp' heading": text + "\n### DivFwdOp\n",
+            "repeated '## Queue' heading": text + "\n## Queue\n",
+            "DivFwdOp is listed twice": text.replace("| 5 | [RMSNormFwdOp](#rmsnormfwdop) |", "| 5 | [DivFwdOp](#divfwdop) |"),
         }
         for message, broken in cases.items():
             with self.subTest(message), self.assertRaisesRegex(wiki.FormatError, re.escape(message)):

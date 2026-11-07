@@ -8,7 +8,7 @@ description: Show the TileOPs Perf Tracker queue, let the user pick ops, and sta
 The nightly writes the queue of ops behind to the TileOPs wiki. Each picked op gets one
 round.
 
-`topa` is `~/topa/.venv/bin/topa`. Run it by that path.
+Run `topa` from `PATH`.
 
 ## Steps
 

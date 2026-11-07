@@ -5,7 +5,7 @@ description: Operate running TileFoundry rounds — check status, message an age
 
 # topa round
 
-`topa` is `~/topa/.venv/bin/topa`. Run it by that path. State lives in `~/.topa/`:
+Run `topa` from `PATH`. State lives in `~/.topa/`:
 `ledger.jsonl` (every event), `rounds/<slug>/` (brief, evidence, `round.json`,
 `environment.md`), `config.toml`.
 
