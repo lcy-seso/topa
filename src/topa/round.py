@@ -450,8 +450,7 @@ def foundry_patch(round_dir: Path, source: Path, base: str) -> bool:
 def drop_branch(config: Config, branch: str) -> str:
     """Delete the round's local *branch* when its PR is merged with the branch's last commit.
 
-    `topa pr` pushes with `-u`, so `git branch -d` would take a branch that is only pushed
-    for merged. A squash merge leaves the commits out of main, so GitHub's PR state decides.
+    GitHub's PR state decides: `git branch -d` takes a pushed branch for merged, and misses squash merges.
     """
     tip = sh.run(["git", "-C", config.tileops_repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
                  check=False)
