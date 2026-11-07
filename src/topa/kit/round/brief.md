@@ -178,7 +178,7 @@ after two reviews ends the round: follow [Ending without a PR](#ending-without-a
 
 1. Inline single-caller helpers.
 2. Merge repeated logic.
-3. Delete process comments and tests of intermediate steps.
+3. Delete process comments and tests that guard no shipped behavior.
 4. Pass `pre-commit run --all-files`.
 5. Run the verification on the candidate commit: the affected tests on the GPU,
    `scripts/validate_manifest.py`, the benchmark and the stage 3 analyses.
@@ -204,26 +204,26 @@ Exit: the verification passes, and the result of the bar is unchanged.
 
 7. Replace every `<...>`.
 8. Keep every `## ` heading and every column.
-9. Keep the published HIR, the `run.sh` that reproduces each analysis, and the results of
-   rejected directions.
-10. Leave out local paths, raw logs, and the order things were tried.
-11. Run `{{TOPA}} pr`.
-12. Re-read the final HIR, the evidence and the diff.
-13. Run `{{TOPA}} pr --reviewed`. Never use `gh pr create`, `gh pr edit` or merge.
-14. Report the PR link.
-15. Stay in this session for CI and review.
-16. After a base move, repeat steps 1-13.
+9. Leave out local paths, raw logs, and the order things were tried.
+10. Run `{{TOPA}} pr`.
+11. Re-read the final HIR, the evidence and the diff.
+12. Run `{{TOPA}} pr --reviewed`. Never use `gh pr create`, `gh pr edit` or merge.
+13. Report the PR link.
+14. Fix each CI failure and answer each review comment in this session, then repeat steps
+    3-12.
+15. After a base move, repeat steps 1-12.
 
 Exit: the PR is open and its link is reported.
 
 ## Ending without a PR
 
-1. Write `## Stop records` in `report.md`: the stop records of stage 4 that apply, the
-   rows still behind with their last measured numbers, and both sides' evidence for a
-   decision. Mark each record that does not apply, with the reason.
-2. Close any PR this round opened, with a comment saying why.
-3. Report the stop.
-4. Stay in this session.
+1. Write `## Stop records` in `report.md`: the stop records of stage 4 that apply and the
+   rows still behind with their last measured numbers. Mark each record that does not
+   apply, with the reason.
+2. When a disputed finding or a missing comparator stopped the round, write the decision
+   a person must make and the evidence on each side.
+3. Close any PR this round opened, with a comment saying why.
+4. Report the stop and the decision it waits for.
 
 ## TileFoundry findings
 

@@ -151,7 +151,11 @@ class GateTests(unittest.TestCase):
             "below bar result must beat main": lambda: (p.update(result="below bar"), self.edit(
                 "pr-comments.md", lambda t: t.replace("**bar met**", "**below bar**"))),
             "behind its comparator": lambda: self.edit(
-                "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 1 | 1 | 1 | 1 | 1 | 0.5 |")),
+                "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 1 | 1 | 1 | 1 | 0.5 | 0.5 |")),
+            "states ratio 1.0, its times give 0.5000": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 1 | 1 | 1 | 1 | 0.5 | 1 |")),
+            "other-ops table needs": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("| Op | Workload | main (us) | candidate (us) |", "| Op | Workload | main (us) | new (us) |")),
             "needs positive times": lambda: self.edit(
                 "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | inf | 1 | 1 | 1 | 1 | 1 |")),
             "row '1' is slower than main": lambda: self.edit(

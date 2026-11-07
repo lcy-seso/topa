@@ -22,7 +22,8 @@ Artifact checks passed. Re-open the actual files before creating the PR:
 
 1. Was final_hir.py analyzed, finalized with schedule finalize, and the kernel written from its TIR?
 2. Do the raw analyze reports justify the chosen placement over the rejected ones?
-3. Was every row of the Performance comment measured alternating main, candidate and comparators?
+3. Was every row of the op measured alternating main, candidate and comparators, and every row of
+   another op sharing a changed kernel alternating main and candidate?
 4. Does every claim in pr-template.md and pr-comments.md match the evidence?
 
 If any answer is no or uncertain, continue the round instead of opening a PR.

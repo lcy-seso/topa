@@ -30,6 +30,8 @@ RESULTS = ("bar met", "below bar")
 # The Perf Tracker's line for a row behind. The gate holds `bar met` to it; whether a row
 # near it ties within a timer step or at the floor is for the review to judge.
 BEHIND = 0.99
+# How far a stated ratio may sit from the one its rounded times give.
+RATIO_ROUNDING = 0.01
 ENVIRONMENT_ROWS = ("image", "digest", "gpu", "timer")
 # A template placeholder: `<...>` outside code, except the HTML tags a PR may use; or a
 # code block whose only line is one.
@@ -211,6 +213,8 @@ def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, 
         raise GateError("Performance: the results table needs main (us), candidate (us) and ratio columns")
     faster = _not_slower(results, 0)
     others = _table(lines, "| Op | Workload |")
+    if others and not {"main (us)", "candidate (us)"} <= set(others[0]):
+        raise GateError("Performance: the other-ops table needs main (us) and candidate (us) columns")
     if others:
         _not_slower(others, 2)
     seen = {row[0].strip("`") for row in results[1:]}
@@ -219,11 +223,20 @@ def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, 
     absent = [name for name in workloads if name not in seen]
     if absent:
         raise GateError(f"Performance: the results table lacks the rows behind {', '.join(absent)}")
+    # Each ratio column follows its comparator's time column.
+    candidate = results[0].index("candidate (us)")
     ratios = [i for i, name in enumerate(results[0]) if name == "ratio"]
     for row in results[1:]:
-        if result == "bar met" and any((_time(row[i]) if i < len(row) else None) is None
-                                       or _time(row[i]) < BEHIND for i in ratios):
-            raise GateError(f"Performance: row {row[0].strip('`')!r} is behind its comparator, so the bar is not met")
+        name = row[0].strip("`")
+        for i in ratios:
+            comparator, stated = (_time(row[j]) if j < len(row) else None for j in (i - 1, i))
+            if comparator is None or stated is None:
+                raise GateError(f"Performance: row {name!r} needs a positive comparator time and ratio")
+            ratio = comparator / _time(row[candidate])
+            if abs(stated - ratio) > RATIO_ROUNDING:
+                raise GateError(f"Performance: row {name!r} states ratio {stated}, its times give {ratio:.4f}")
+            if result == "bar met" and ratio < BEHIND:
+                raise GateError(f"Performance: row {name!r} is behind its comparator, so the bar is not met")
     if result == "below bar" and not faster & (set(workloads) or seen):
         raise GateError("Performance: a below bar result must beat main on a row behind")
 
