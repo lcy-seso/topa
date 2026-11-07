@@ -11,7 +11,8 @@ from topa import gate, ledger
 from topa.grade import BEHIND, grade_op, parse
 from topa.hook import decide
 from topa.issue import Issue, branch_name, round_slug
-from topa.round import kit, render
+from topa.container import foreign_files
+from topa.round import CLEAR_CLAUDE_ENV, kit, render
 
 HIR = 'class Operator:\n    def kernel(self, x):\n        return tf.schedule((x,), op=T.cuda.sm90.Wgmma(n=16))\n'
 OTHER_HIR = "class Operator:\n    def kernel(self, x):\n        return x\n"
@@ -197,6 +198,23 @@ class RoundTests(unittest.TestCase):
                 ledger.append(event, path, round="i1-r1", **fields)
             view = ledger.rounds(path)["i1-r1"]
         self.assertEqual((view["state"], view["pane"], "text" in view), ("running", "w1:p1", False))
+
+
+class EnvironmentTests(unittest.TestCase):
+    def test_pane_drops_claude_variables_only(self) -> None:
+        env = {"PATH": "/usr/bin:/bin", "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1", "KEEP": "1"}
+        for shell in ("sh", "bash"):
+            out = subprocess.run([shell, "-c", f"{CLEAR_CLAUDE_ENV}; env"], env=env,
+                                 capture_output=True, text=True, check=True).stdout
+            self.assertNotIn("CLAUDE", out, shell)
+            self.assertIn("KEEP=1", out, shell)
+
+    def test_own_files_are_not_foreign(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "work").mkdir()
+            (root / "work" / "a.py").write_text("")
+            self.assertFalse(foreign_files([root, root / "missing"]))
 
 
 if __name__ == "__main__":

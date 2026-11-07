@@ -240,15 +240,61 @@ def _install(config: Config, container: str, worktree: Path, foundry_source: Pat
     sh.docker(config, "exec", container, "bash", "-c",
               f"set -e; shopt -s nullglob; wheels=(/opt/topa/wheels/*.whl); "
               f'if (( ${{#wheels[@]}} )); then {pip} --no-index "${{wheels[@]}}"; fi')
-    for name, path in (("tilefoundry", foundry_source), ("tileops", worktree)):
-        sh.docker(config, "exec", "--env", f"PYTHONPATH=/opt/topa/build-tools/{name}",
+    # TileFoundry ships its NVIDIA target as a second package in the same checkout. It
+    # builds with TileFoundry's backend and depends only on tilefoundry.
+    nvidia = foundry_source / "targets" / "nvidia"
+    projects = [("tilefoundry", foundry_source), ("tileops", worktree)]
+    checks = [("tilefoundry", foundry_source), ("tileops", worktree)]
+    if (nvidia / "pyproject.toml").is_file():
+        projects.insert(1, ("tilefoundry", nvidia))
+        checks.append(("tilefoundry_nvidia", nvidia))
+    for backend, path in projects:
+        sh.docker(config, "exec", "--env", f"PYTHONPATH=/opt/topa/build-tools/{backend}",
                   "--workdir", str(path), container, "bash", "-c",
                   f"{pip} --no-index --no-build-isolation --editable .")
+    imports = ", ".join(module for module, _ in checks)
+    pairs = ", ".join(f"({module}, '{root}/')" for module, root in checks)
     sh.docker(config, "exec", container, "python", "-c",
-              "import pathlib, tilefoundry, tileops\n"
-              f"for module, root in ((tilefoundry, '{foundry_source}/'), (tileops, '{worktree}/')):\n"
+              f"import pathlib, {imports}\n"
+              f"for module, root in ({pairs},):\n"
               "    path = str(pathlib.Path(module.__file__).resolve())\n"
               "    assert path.startswith(root), path")
+
+
+def foreign_files(paths: list[Path]) -> bool:
+    """Whether any file under *paths* belongs to another user than the one running topa."""
+    me = os.getuid()
+    for root in paths:
+        if not root.exists():
+            continue
+        if root.lstat().st_uid != me:
+            return True
+        for path in root.rglob("*"):
+            try:
+                if path.lstat().st_uid != me:
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def give_back(config: Config, container: str, paths: list[Path]) -> bool:
+    """Chown what the container wrote under *paths* back to the user running topa.
+
+    The container runs as root. Under rootful Docker its files belong to root on the
+    host, and `round stop --rm` cannot remove the worktree. Under rootless Docker the
+    container's root is this user, nothing is foreign, and this does nothing.
+    """
+    paths = [path for path in paths if path.exists()]
+    if not paths or not foreign_files(paths):
+        return False
+    if not sh.docker_ok(config, "container", "inspect", container):
+        return False
+    # A round stopped earlier has a stopped container; exec needs it running.
+    sh.docker(config, "start", container, check=False)
+    owner = f"{os.getuid()}:{os.getgid()}"
+    sh.docker(config, "exec", container, "chown", "-R", owner, *map(str, paths), check=False)
+    return True
 
 
 def remove(config: Config, slug: str) -> list[str]:

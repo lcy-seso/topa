@@ -2,7 +2,7 @@
 
 The source is read-only for a round -- it reads and runs TileFoundry and reports what
 blocks it as one issue. The checkout is still a real one, because `tilefoundry
-tutorial`, `spec` and `tests/fixtures/schedule/` read from it and are not in a wheel.
+tutorial`, `spec` and `tests/nvidia/cuda/fixtures/schedule/` read from it and are not in a wheel.
 """
 
 from __future__ import annotations

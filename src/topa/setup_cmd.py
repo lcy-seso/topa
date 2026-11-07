@@ -21,16 +21,18 @@ from topa.config import Config
 def setup(config: Config) -> list[str]:
     done = []
     sh.require("claude", "docker", "gh", "git", "herdr", "ssh", "ssh-keygen", "nvidia-smi")
-    for repo in (config.tileops_repo, config.tilefoundry_repo):
-        if not (repo / ".git").exists():
-            raise SystemExit(f"not a git checkout: {repo}")
-    for path in (config_module.HOME, config.rounds, config.ssh_config_dir, config.ssh_key_root,
-                 config.worktree_root):
-        path.mkdir(parents=True, exist_ok=True)
-    config.ssh_key_root.chmod(0o700)
+    # Write the config first, so a first run that stops below leaves a file to edit.
+    config_module.HOME.mkdir(parents=True, exist_ok=True)
     if not config_module.CONFIG.exists():
         config_module.CONFIG.write_text(config_module.default_toml())
-        done.append(f"wrote {config_module.CONFIG}")
+        print(f"wrote {config_module.CONFIG}")  # now, in case a check below stops setup
+    for repo in (config.tileops_repo, config.tilefoundry_repo):
+        if not (repo / ".git").exists():
+            raise SystemExit(f"not a git checkout: {repo}; set tileops_repo and tilefoundry_repo "
+                             f"in {config_module.CONFIG}, then run topa setup again")
+    for path in (config.rounds, config.ssh_config_dir, config.ssh_key_root, config.worktree_root):
+        path.mkdir(parents=True, exist_ok=True)
+    config.ssh_key_root.chmod(0o700)
 
     sh.bootstrap_docker(config)
     if not sh.docker_ok(config, "image", "inspect", config.runner_image):
