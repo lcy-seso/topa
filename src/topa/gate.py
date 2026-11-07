@@ -193,7 +193,7 @@ def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, 
     """The environment, the method, one row per workload of the op, and no row slower than main.
 
     The op's own table holds the bar: under `bar met` each row beats its comparator or ties
-    it, or the floor, within one timer step; under `below bar` some row beats main. Other
+    it, or the DRAM floor, within one timer step; under `below bar` some row beats main. Other
     ops that share a changed kernel only must not be slower than main.
     """
     lines = text.splitlines()
@@ -209,8 +209,8 @@ def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, 
     if not any(line.startswith("Method: ") for line in lines):
         raise GateError("Performance: the Method line is missing")
     results = _table(lines, "| Workload |")
-    if not results or not {"main (us)", "candidate (us)", "floor (us)", "ratio"} <= set(results[0]):
-        raise GateError("Performance: the results table needs main (us), candidate (us), floor (us) and ratio columns")
+    if not results or not {"main (us)", "candidate (us)", "DRAM floor (us)", "ratio"} <= set(results[0]):
+        raise GateError("Performance: the results table needs main (us), candidate (us), DRAM floor (us) and ratio columns")
     faster = _not_slower(results, 0)
     others = _table(lines, "| Op | Workload |")
     if others and not {"main (us)", "candidate (us)"} <= set(others[0]):
@@ -224,13 +224,13 @@ def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, 
     if absent:
         raise GateError(f"Performance: the results table lacks the rows behind {', '.join(absent)}")
     # Each ratio column follows its comparator's time column.
-    candidate, floor = results[0].index("candidate (us)"), results[0].index("floor (us)")
+    candidate, floor = results[0].index("candidate (us)"), results[0].index("DRAM floor (us)")
     ratios = [i for i, name in enumerate(results[0]) if name == "ratio"]
     for row in results[1:]:
         name = row[0].strip("`")
         ours, least = _time(row[candidate]), _time(row[floor]) if floor < len(row) else None
         if least is None:
-            raise GateError(f"Performance: row {name!r} needs a positive floor")
+            raise GateError(f"Performance: row {name!r} needs a positive DRAM floor")
         for i in ratios:
             comparator, stated = (_time(row[j]) if j < len(row) else None for j in (i - 1, i))
             if comparator is None or stated is None:

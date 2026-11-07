@@ -39,9 +39,9 @@ Analysis: tilefoundry `<version>`, `<target>`. `run.sh` below reproduces every n
 
 Method: <how main, the candidate and the comparators were alternated on one GPU, and how many runs give each median>. Every comparator counted toward the bar passes the case reference before timing. Times are `device_busy_ms`. Ratio: comparator / candidate.
 
-| Workload | main (us) | candidate (us) | floor (us) | candidate / floor | <comparator> (us) | ratio |
+| Workload | main (us) | candidate (us) | DRAM floor (us) | candidate / DRAM floor | <comparator> (us) | ratio |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| <workload> | <main median> | <candidate median> | <floor> | <candidate / floor> | <comparator median> | <comparator / candidate> |
+| <workload> | <main median> | <candidate median> | <DRAM floor> | <candidate / DRAM floor> | <comparator median> | <comparator / candidate> |
 
 Other ops that share a changed kernel:
 

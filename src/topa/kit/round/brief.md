@@ -105,12 +105,14 @@ Exit: the check passes on every output of every workload.
 
 1. Run `tilefoundry analyze <hir>.py:<Module> <report> --compute-cost --memory --roofline --json`
    per workload; `ideal-ns` and `bound-by` are its floor.
-2. Check the flops and traffic by hand: each input read once, each output written once.
-3. Fix the HIR where the hand count and the report disagree.
-4. List placements, including the incumbent's and the fastest comparator's, read from `ncu`
+2. Record each workload's DRAM floor: the bytes it must move over the DRAM bandwidth that
+   `tilefoundry target show` gives.
+3. Check the flops and traffic by hand: each input read once, each output written once.
+4. Fix the HIR where the hand count and the report disagree.
+5. List placements, including the incumbent's and the fastest comparator's, read from `ncu`
    and the comparator's generated source.
-5. Run `analyze ... --memory --performance --json` on each placement.
-6. Choose one by waves, storage use and predicted time, and record why.
+6. Run `analyze ... --memory --performance --json` on each placement.
+7. Choose one by waves, storage use and predicted time, and record why.
 
 Exit: every workload has a checked floor, and the chosen placement has a recorded reason.
 
@@ -119,7 +121,8 @@ Exit: every workload has a checked floor, and the chosen placement has a recorde
 Run each round in this order, and add it to `iterations` in `provenance.json`:
 
 1. Change the HIR's placement or schedule.
-2. Run `analyze`. Continue if it predicts less time than the current kernel's placement on
+2. Run the stage 3 `analyze ... --memory --performance --json` on the changed placement.
+   Continue if it predicts less time than the current kernel's placement on
    the targeted rows. Otherwise continue only with a named effect HIR cannot express and
    the measurement that would show it.
 3. Run `tilefoundry schedule candidates`.
@@ -130,7 +133,7 @@ Run each round in this order, and add it to `iterations` in `provenance.json`:
 7. Re-run the stage 2 check if the math, outputs or shapes changed.
 8. Run `tilefoundry check <twin>.py:<Twin> --json <report>` on the runtime twin, which calls
    the production kernel.
-9. Run the TileOPs tests.
+9. Run the tests of `{{OP}}` and of every op that shares a changed kernel.
 10. Measure (rules below).
 11. Record measured / floor, measured / predicted and comparator / measured.
 12. Record the cause of a prediction error, or that it is unresolved, in TileFoundry
@@ -142,7 +145,9 @@ Measure this way:
   `git -C {{TILEOPS_WORKTREE}} worktree add --detach {{ROUND_DIR}}/work/<name> <commit>`.
 - Time each snapshot with its `src` first on `PYTHONPATH`.
 - Alternate main, candidate and comparators on the round's GPU, with the L2 flush.
-- Take the median of at least three runs of `device_busy_ms`.
+- Run at least three repeats; a repeat is one alternating cycle of main, candidate and
+  comparators.
+- Keep each repeat's timings, and report the median of `device_busy_ms`.
 
 Exit: the bar is met. Otherwise, exit when all three stop records hold:
 
@@ -195,7 +200,7 @@ Exit: the verification passes, and the result of the bar is unchanged.
 3. Title the commit `[Perf][foundry][<Family>] <imperative description>`, with no
    authorship trailer.
 4. Run stage 6 steps 4-5.
-5. Measure main and the candidate again, and set the result.
+5. Measure again by the stage 4 rules, and set `result` in `provenance.json`.
 6. Run stage 5 on the final diff and evidence when steps 1-5 changed code or a number.
 7. Set `candidate_commit` in `provenance.json` to HEAD.
 8. Fill in `pr-template.md` and `pr-comments.md` where they are:
