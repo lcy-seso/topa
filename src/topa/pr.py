@@ -2,8 +2,8 @@
 
 The PR comes from the fork: the branch is pushed to the remote of `fork_owner`
 (the gh login by default), and the PR's head is `<fork_owner>:<branch>`. Its body
-is `pr-template.md`; each section of a perf round's `pr-comments.md` is one comment,
-linked from the end of the body.
+is `pr-template.md`, which becomes the squash commit's message; each section of
+`pr-comments.md` is one comment.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ CHECKLIST = {
     "general": """
 1. Does the diff do everything the issue asks, and nothing it does not?
 2. Does each new test fail on the base and pass on the candidate?
-3. Does every claim in pr-template.md match the evidence?""",
+3. Does every claim in pr-template.md and pr-comments.md match the evidence?""",
 }
 
 
@@ -43,7 +43,7 @@ def gate(config: Config, slug: str | None = None) -> Round:
     return current
 
 
-def _post_comments(config: Config, number: int, comments: list[tuple[str, str]], folder: str) -> list[str]:
+def _post_comments(config: Config, number: int, comments: list[tuple[str, str]], folder: str) -> None:
     """Create or update one comment per section; ours is the one we wrote that opens with its heading."""
     me = sh.gh_login()
     out = sh.run(["gh", "api", "--paginate", f"repos/{config.upstream}/issues/{number}/comments",
@@ -53,23 +53,19 @@ def _post_comments(config: Config, number: int, comments: list[tuple[str, str]],
         comment = json.loads(line)
         if comment["login"] == me:
             existing.setdefault(comment["body"].split("\n", 1)[0].strip(), comment["id"])
-    urls = []
     for name, text in comments:
         path = Path(folder, "comment.md")
         path.write_text(text, encoding="utf-8")
         found = existing.get(f"## {name}")
         endpoint = (f"repos/{config.upstream}/issues/comments/{found}" if found
                     else f"repos/{config.upstream}/issues/{number}/comments")
-        urls.append(sh.run(["gh", "api", "-X", "PATCH" if found else "POST", endpoint,
-                            "-F", f"body=@{path}", "--jq", ".html_url"]))
-    return urls
+        sh.run(["gh", "api", "-X", "PATCH" if found else "POST", endpoint, "-F", f"body=@{path}"])
 
 
 def open_pr(config: Config, slug: str | None = None, *, reviewed: bool = False, watch: bool = True) -> str:
     current = gate(config, slug)
-    perf = current.meta.get("kind", "perf") == "perf"
-    sh.note("Artifact checks passed. Re-open the actual files before creating the PR:\n"
-            + CHECKLIST["perf" if perf else "general"]
+    kind = current.meta.get("kind", "perf")
+    sh.note("Artifact checks passed. Re-open the actual files before creating the PR:\n" + CHECKLIST[kind]
             + "\n\nIf any answer is no or uncertain, continue the round instead of opening a PR.")
     if not reviewed:
         sh.note("PR not opened. Inspect those files, then rerun: topa pr --reviewed")
@@ -83,7 +79,7 @@ def open_pr(config: Config, slug: str | None = None, *, reviewed: bool = False, 
     repo_name = config.upstream.split("/", 1)[1]
     fork = sh.github_remote(worktree, f"{owner}/{repo_name}")
     title, text = read_pr(current.dir)
-    comments = read_comments(current.dir) if perf else []
+    comments = read_comments(current.dir, kind)
     repo = ["--repo", config.upstream]
 
     sh.run(["git", "-C", worktree, "push", "--force-with-lease", "-u", fork, branch], capture=False)
@@ -102,11 +98,9 @@ def open_pr(config: Config, slug: str | None = None, *, reviewed: bool = False, 
             number = int(url.rstrip("/").rsplit("/", 1)[1])
         # Recorded before the comments, so a PR whose comments fail is still the round's.
         ledger.append("pr", round=current.slug, pr=url)
-        if comments:
-            urls = _post_comments(config, number, comments, folder)
-            links = " · ".join(f"[{name}]({url})" for (name, _), url in zip(comments, urls))
-            body.write_text(f"{text}\n{links}\n", encoding="utf-8")
-        sh.run(["gh", "pr", "edit", str(number), *repo, "--title", title, "--body-file", body])
+        _post_comments(config, number, comments, folder)
+        if existing:
+            sh.run(["gh", "pr", "edit", str(number), *repo, "--title", title, "--body-file", body])
     print(url)
     if watch:
         sh.run(["gh", "pr", "checks", url, *repo, "--watch", "--interval", "300"], check=False, capture=False)

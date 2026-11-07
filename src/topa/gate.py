@@ -20,18 +20,18 @@ class GateError(ValueError):
 
 # What the round is measured against, and the repository's own tooling.
 FORBIDDEN_ROOTS = ("benchmarks/", "workloads/", "src/tileops/manifest/", "scripts/", ".github/")
-# The round's PR: `pr-template.md` of the round's kind in `kit/round/` is the title and
-# body; a perf round's `pr-comments.md` holds one comment per section. Both filled in.
+# The round's PR, from the files of its kind in `kit/round/`, filled in: `pr-template.md` is
+# the title and a body of one Summary section, which becomes the squash commit's message;
+# `pr-comments.md` holds one comment per section.
 PR_FILE = "pr-template.md"
 COMMENTS_FILE = "pr-comments.md"
-BODY_SECTIONS = ("Summary", "Test plan", "Test node delta", "Benchmark")
-# TileOPs `.github/PULL_REQUEST_TEMPLATE.md`: a general PR keeps these in order, deleting
-# those that do not apply except the first two.
-GENERAL_SECTIONS = (*BODY_SECTIONS, "Regression")
+COMMENT_SECTIONS = {
+    "perf": ("Test Plan", "TileFoundry Description", "Performance", "Result And Limitations", "TileFoundry Findings"),
+    "general": ("Test Plan",),
+}
 # TileOPs `scripts/ci/types.sh`: `[Type] description` or `[Type][Scope] description`.
 GENERAL_TITLE = re.compile(r"\[(Bench|BugFix|Chore|CI|Design|Doc|Enhancement|Feat|Fix|Maintain|Perf|Refactor|"
                            r"Style|Test)\](\[[A-Za-z0-9_-]+\])? [A-Z`].+")
-COMMENT_SECTIONS = ("TileFoundry Description", "Performance", "Result And Limitations", "TileFoundry Findings")
 RESULTS = ("bar met", "below bar")
 # How far a stated ratio may sit from the one its rounded times give.
 RATIO_ROUNDING = 0.01
@@ -132,11 +132,11 @@ def read_pr(round_dir: Path) -> tuple[str, str]:
     return first[2:].strip(), body.strip() + "\n"
 
 
-def read_comments(round_dir: Path) -> list[tuple[str, str]]:
+def read_comments(round_dir: Path, kind: str) -> list[tuple[str, str]]:
     """The PR's comments: one per section of the filled-in comments file, in order."""
     found = sections(_required_file(round_dir, COMMENTS_FILE).read_text(encoding="utf-8"))
-    if tuple(name for name, _ in found) != COMMENT_SECTIONS:
-        raise GateError(f"{COMMENTS_FILE} must have exactly the sections {', '.join(COMMENT_SECTIONS)}, in order")
+    if tuple(name for name, _ in found) != COMMENT_SECTIONS[kind]:
+        raise GateError(f"{COMMENTS_FILE} must have exactly the sections {', '.join(COMMENT_SECTIONS[kind])}, in order")
     return [(name, text.strip() + "\n") for name, text in found]
 
 
@@ -243,28 +243,21 @@ def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, 
 def _validate_pr(round_dir: Path, kind: str, issue: int | None) -> None:
     """The PR text of either kind: filled in, no local path, the kind's title and sections, the issue link."""
     title, body = read_pr(round_dir)
-    texts = [(PR_FILE, f"{title}\n{body}")]
-    if kind == "perf":
-        texts.append((COMMENTS_FILE, _required_file(round_dir, COMMENTS_FILE).read_text(encoding="utf-8")))
+    read_comments(round_dir, kind)
+    texts = [(PR_FILE, f"{title}\n{body}"),
+             (COMMENTS_FILE, _required_file(round_dir, COMMENTS_FILE).read_text(encoding="utf-8"))]
     for name, text in texts:
         left = PLACEHOLDER.search(re.sub(r"```.*?```", "", text, flags=re.DOTALL)) or EMPTY_BLOCK.search(text)
         if left:
             raise GateError(f"{name} still has the placeholder {left.group(0)}")
         if LOCAL_PATH.search(text):
             raise GateError(f"{name} exposes a local path")
-    found = tuple(name for name, _ in sections(body))
-    if kind == "perf":
-        if not re.fullmatch(r"\[Perf\]\[foundry\]\[[A-Za-z0-9_-]+\] [A-Z`].+", title):
-            raise GateError(f"the {PR_FILE} title does not follow [Perf][foundry][Family] Description")
-        if found not in (BODY_SECTIONS, (*BODY_SECTIONS, "Regression")):
-            raise GateError(f"{PR_FILE} must have exactly the sections {', '.join(BODY_SECTIONS)}, in order")
-    else:
-        if not GENERAL_TITLE.fullmatch(title):
-            raise GateError(f"the {PR_FILE} title does not follow [Type] Description or [Type][Scope] Description")
-        if found[:2] != GENERAL_SECTIONS[:2] or found != tuple(s for s in GENERAL_SECTIONS if s in found) \
-                or len(set(found)) != len(found):
-            raise GateError(f"{PR_FILE} must have Summary, Test plan and then only the sections "
-                            f"{', '.join(GENERAL_SECTIONS[2:])}, in that order")
+    if kind == "perf" and not re.fullmatch(r"\[Perf\]\[foundry\]\[[A-Za-z0-9_-]+\] [A-Z`].+", title):
+        raise GateError(f"the {PR_FILE} title does not follow [Perf][foundry][Family] Description")
+    if kind != "perf" and not GENERAL_TITLE.fullmatch(title):
+        raise GateError(f"the {PR_FILE} title does not follow [Type] Description or [Type][Scope] Description")
+    if not body.startswith("## Summary\n") or [name for name, _ in sections(body)] != ["Summary"]:
+        raise GateError(f"the {PR_FILE} body must be the Summary section alone")
     if issue is not None:
         link = f"{'Refs' if kind == 'perf' else 'Closes'} #{issue}"
         if not re.search(rf"^{link}$", body, flags=re.MULTILINE):
@@ -273,7 +266,7 @@ def _validate_pr(round_dir: Path, kind: str, issue: int | None) -> None:
 
 def _validate_comments(round_dir: Path, final_hir: Path, result: str, workloads: tuple[str, ...],
                        measured: int) -> None:
-    comments = dict(read_comments(round_dir))
+    comments = dict(read_comments(round_dir, "perf"))
     match = re.search(r"```python\s*\n(.*?)\n```", comments["TileFoundry Description"], flags=re.DOTALL)
     if not match:
         raise GateError("TileFoundry Description must contain one Python HIR block")

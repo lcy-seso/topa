@@ -5,8 +5,9 @@
 - `src/topa/kit/round/brief.md` is the round contract shared by every round; `perf/brief.md`
   and `general/brief.md` hold the stages of each kind. `round start` joins the shared part
   with the round's kind and fills the placeholders; an unfilled one is an error. Each kind
-  folder also holds the PR text the agent fills in: `pr-template.md`, and for perf
-  `pr-comments.md`, its four comments.
+  folder also holds the PR text the agent fills in: `pr-template.md`, the title and a
+  Summary-only body, and `pr-comments.md`, one comment per section (Test Plan, and for perf
+  the four evidence comments).
 - `src/topa/knowledge/tilelang.md` holds TileLang and ptxas facts that earlier rounds
   confirmed. Rounds read it. People add to it from round reports.
 - `src/topa/kit/container/` holds the agent image: the TileOPs runner image plus sshd.

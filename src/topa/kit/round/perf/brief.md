@@ -130,8 +130,8 @@ Title: `[Perf][foundry][<Family>] <imperative description>`.
 
 | File | Becomes | Holds |
 | --- | --- | --- |
-| `pr-template.md` | the title (line 1, same as the commit) and the body | Summary, Test plan, Test node delta (`scripts/test_node_delta.py` output and the path each new case guards), Benchmark |
-| `pr-comments.md` | one comment per `## ` section | TileFoundry Description with `work/final_hir.py` verbatim; Performance with one row per measured workload of the op, and the other ops that share a changed kernel (delete that table when there are none); Result And Limitations opening with the result; TileFoundry Findings |
+| `pr-template.md` | the title (line 1, same as the commit) and the body, which becomes the squash commit's message | Summary alone: one-line bullets of the kernel change and the gap's root cause |
+| `pr-comments.md` | one comment per `## ` section | Test Plan with the `scripts/test_node_delta.py` output and the path each new case guards; TileFoundry Description with `work/final_hir.py` verbatim; Performance with one row per measured workload of the op, and the other ops that share a changed kernel (delete that table when there are none); Result And Limitations opening with the result; TileFoundry Findings |
 
 Keep every `## ` heading and every column.
 

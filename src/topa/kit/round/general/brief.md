@@ -43,7 +43,7 @@ with `<Type>` from TileOPs `scripts/ci/types.sh` for the issue's type.
 
 | File | Becomes | Holds |
 | --- | --- | --- |
-| `pr-template.md` | the title (line 1, same as the commit) and the body | Summary, Test plan, Test node delta (`scripts/test_node_delta.py` output and the path each new case guards), Regression |
+| `pr-template.md` | the title (line 1, same as the commit) and the body, which becomes the squash commit's message | Summary alone: one-line bullets of the change and what it fixes |
+| `pr-comments.md` | one comment, Test Plan | the checks run, and the `scripts/test_node_delta.py` output with the path each new case guards |
 
-- Delete Test node delta when the PR touches no test, and Regression when it fixes no bug.
-- Keep the other `## ` headings, in order.
+- Delete the test node delta when the PR touches no test.

@@ -17,7 +17,7 @@ its fastest comparator:
    TileFoundry; implement in rounds whose schedule TileFoundry derives, measuring main
    and the candidate alternately; have Codex review the diff; clean up and verify
    again; open the PR with `topa pr`. That command checks the evidence, opens the PR from
-   your fork, and posts the evidence as four comments. TileFoundry problems the agent hits
+   your fork, and posts the test plan and the evidence as five comments. TileFoundry problems the agent hits
    go into one TileFoundry issue.
 5. A round that misses the bar on some rows still opens its PR when it beats main and
    slows no row; the unmet rows go under Result And Limitations. Otherwise it opens no PR

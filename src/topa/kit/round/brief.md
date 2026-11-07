@@ -83,7 +83,7 @@ Exit: the verification passes.
 5. Run the review on the final diff and evidence when steps 1-4 changed code or a number.
 6. Set `candidate_commit` in `provenance.json` to HEAD.
 7. Fill in the files [PR files](#pr-files) lists, where they are. {{LINK}}
-8. Replace every `<...>`.
+8. Replace every `<...>`, and add no `## ` section to the body.
 9. Leave out of the PR body and comments: local paths, raw logs, and the order things
    were tried.
 10. Run `{{TOPA}} pr`.

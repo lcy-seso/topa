@@ -1,3 +1,16 @@
+## Test Plan
+
+- [x] `pre-commit run --all-files`
+- [x] `pytest` on the affected files, on a real GPU
+
+Test node delta:
+
+```text
+<the output of python scripts/test_node_delta.py --base <remote>/main>
+```
+
+- <one line per new case: the code path, dtype, feature or regression it guards>
+
 ## TileFoundry Description
 
 - **Floor.** TileFoundry's floor of the whole op: <workload> <floor> us (<bound>-bound); <one entry per workload>

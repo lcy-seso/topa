@@ -122,25 +122,29 @@ class GateTests(unittest.TestCase):
         self.assertEqual(self.validate()["result"], "bar met")
 
     def test_general_round_skips_the_perf_checks(self) -> None:
-        for name in ("pr-comments.md", "work/final_hir.py"):
-            (self.round / name).unlink()
-        body = filled("pr-template.md", kind="general").replace("## Test plan", "Closes #7\n\n## Test plan")
+        (self.round / "work/final_hir.py").unlink()
+        body = filled("pr-template.md", kind="general") + "\nCloses #7\n"
         (self.round / "pr-template.md").write_text(body)
+        (self.round / "pr-comments.md").write_text(filled("pr-comments.md", kind="general"))
         self.provenance = {key: self.provenance[key] for key in ("tileops_base", "candidate_commit", "tests", "reviews")}
         self.write_provenance()
         gate.validate_round(self.round, self.repo, kind="general", issue=7)
         for message, text in {
             "line Closes #7": body.replace("Closes #7", "Refs #7"),
-            "Summary, Test plan and then only": body.replace("## Regression", "## Notes"),
+            "Summary section alone": body + "\n## Regression\n\n- 1\n",
             "title does not follow \\[Type\\]": body.replace("[BugFix][Norm]", "[Bug]"),
+            "placeholder": None,
         }.items():
             with self.subTest(message):
+                if text is None:
+                    (self.round / "pr-comments.md").write_text((kit() / "general" / "pr-comments.md").read_text())
+                    text = body
                 (self.round / "pr-template.md").write_text(text)
                 with self.assertRaisesRegex(gate.GateError, message):
                     gate.validate_round(self.round, self.repo, kind="general", issue=7)
 
     def test_perf_issue_round_takes_its_rows_from_provenance(self) -> None:
-        self.edit("pr-template.md", lambda t: t.replace("## Test plan", "Refs #7\n\n## Test plan"))
+        self.edit("pr-template.md", lambda t: t + "\nRefs #7\n")
         self.provenance["workloads"] = ["1"]
         self.write_provenance()
         self.assertEqual(gate.validate_round(self.round, self.repo, issue=7)["result"], "bar met")
@@ -175,10 +179,10 @@ class GateTests(unittest.TestCase):
                 '{"findings": [], "issue": "https://github.com/tile-ai/TileFoundry/issues/1"}'),
             "exact final HIR": lambda: (self.round / "work/final_hir.py").write_text(HIR + "# changed\n"),
             "title as a `# ` line": lambda: self.edit("pr-template.md", lambda t: t.split("\n", 1)[1]),
-            "placeholder ```text": lambda: self.edit("pr-template.md",
+            "placeholder ```text": lambda: self.edit("pr-comments.md",
                                                      lambda t: t.replace("```text\n1\n```", "```text\n<x>\n```")),
             "placeholder <x>": lambda: self.edit("pr-template.md", lambda t: t.replace("## Summary\n\n- 1", "## Summary\n\n- <x>")),
-            "Summary, Test plan": lambda: self.edit("pr-template.md", lambda t: t.replace("## Test plan\n", "")),
+            "Summary section alone": lambda: self.edit("pr-template.md", lambda t: t + "\n## Benchmark\n\n- 1\n"),
             "TileFoundry Findings, in order": lambda: self.edit(
                 "pr-comments.md", lambda t: t.replace("## TileFoundry Findings", "## Findings")),
             "full sha256": lambda: self.edit("pr-comments.md", lambda t: t.replace("a" * 64, "a" * 12)),
