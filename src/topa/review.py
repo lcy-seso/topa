@@ -38,7 +38,7 @@ def checklists(paths: Iterable[str]) -> list[Path]:
     """`general.md`, then the checklist of each area the changed *paths* touch."""
     paths = list(paths)
     names = ["general.md"] + [name for name, pattern in CHECKLISTS if any(pattern.search(p) for p in paths)]
-    return [Path(str(files("topa") / "checklists" / name)) for name in names]
+    return [Path(str(files("topa") / "kit" / "review" / "checklists" / name)) for name in names]
 
 
 def commentable(diff: str) -> set[tuple[str, str, int]]:

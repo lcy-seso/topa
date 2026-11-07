@@ -50,5 +50,5 @@ comments off the diff, move them onto a diff line or into the summary and rerun 
 ## 5. Report
 
 Give the PR link, the number of comments posted and the threads still open. Propose at
-most three one-sentence, pass/fail checklist bullets for `src/topa/checklists/` that would
-have caught a finding earlier. Do not edit the checklists unasked.
+most three one-sentence, pass/fail checklist bullets for `src/topa/kit/review/checklists/` that would
+have caught a finding earlier. Do not edit the review checklists unasked.
