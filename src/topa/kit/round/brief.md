@@ -34,8 +34,8 @@ run [{{NIGHTLY_RUN}}]({{NIGHTLY_RUN_URL}}), commit `{{NIGHTLY_COMMIT}}`, benchma
 | none | Neither, or a person must decide. | Follow [Ending without a PR](#ending-without-a-pr). |
 
 - "Any op" includes every op that shares a kernel the round changes.
-- `topa gate` checks a tie from the Performance table: the candidate within the timer step
-  of the comparator or of the floor. The review checks every repeat.
+- `topa gate` checks this rule on the medians of the Performance table; stage 5 checks the
+  repeats.
 
 ## Rules
 
@@ -154,16 +154,16 @@ Exit: the bar is met. Otherwise, exit when all three stop records hold:
 
 ### 5. Review
 
-1. Run Codex read-only from the worktree:
+1. Run Codex read-only on the worktree, from the round directory:
 
    ```bash
-   codex exec -C {{TILEOPS_WORKTREE}} --sandbox read-only "<prompt>" < /dev/null > evidence/review-<n>.md 2>&1
+   codex exec -C {{TILEOPS_WORKTREE}} --sandbox read-only "<prompt>" < /dev/null > {{ROUND_DIR}}/evidence/review-<n>.md 2>&1
    ```
 
 2. Give it the diff against the current `tileops_base`, this brief, the rows, the
    Performance table with its raw timings, the timer resolution and the floors, and the
-   paths of TileOPs `docs/design/` and `docs/code-style.md`. Give it none of your
-   conclusions.
+   paths of TileOPs `docs/design/` and `docs/code-style.md`. Withhold your
+   self-review and how you would settle its findings.
 3. Ask for correctness (edge shapes, dtypes, tails), the real call path, branch coverage by
    tests, the comparator classes, ties claimed under the bar, regressions against main,
    and hotfixes: a loosened tolerance or check, a skipped case, logic only tests reach, or
@@ -191,29 +191,31 @@ Exit: the verification passes, and the result of the bar is unchanged.
 ### 7. PR
 
 1. Rebase onto the newest `{{UPSTREAM}}` main.
-2. Title the commit `[Perf][foundry][<Family>] <imperative description>`, with no
+2. Set `tileops_base` in `provenance.json` to the new base.
+3. Title the commit `[Perf][foundry][<Family>] <imperative description>`, with no
    authorship trailer.
-3. Run stage 6 steps 4-6.
-4. Measure main and the candidate again, and set the result.
-5. Set `tileops_base` to the new base and `candidate_commit` to HEAD in `provenance.json`.
-6. Fill in `pr-template.md` and `pr-comments.md` where they are:
+4. Run stage 6 steps 4-5.
+5. Measure main and the candidate again, and set the result.
+6. Run stage 5 on the final diff and evidence when steps 1-5 changed code or a number.
+7. Set `candidate_commit` in `provenance.json` to HEAD.
+8. Fill in `pr-template.md` and `pr-comments.md` where they are:
 
 | File | Becomes | Holds |
 | --- | --- | --- |
 | `pr-template.md` | the title (line 1, same as the commit) and the body | Summary, Test plan, Test node delta (`scripts/test_node_delta.py` output and the path each new case guards), Benchmark |
 | `pr-comments.md` | one comment per `## ` section | TileFoundry Description with `work/final_hir.py` verbatim; Performance with one row per measured workload of `{{OP}}`, and the other ops that share a changed kernel (delete that table when there are none); Result And Limitations opening with the result; TileFoundry Findings |
 
-7. Replace every `<...>`.
-8. Keep every `## ` heading and every column.
-9. Leave out local paths, raw logs, and the order things were tried.
-10. Run `{{TOPA}} pr`.
-11. Re-read the final HIR, the evidence and the diff.
-12. Run `{{TOPA}} pr --reviewed`. Never use `gh pr create`, `gh pr edit` or merge.
-13. Report the PR link.
-14. Fix each CI failure and each review comment you agree with in this session.
-15. Answer each other review comment with a test, a measurement or a rule.
-16. Run stage 5 again when a fix or a rebase changes kernel logic, dispatch, tests or a
-    performance number; then repeat steps 1-12.
+9. Replace every `<...>`.
+10. Keep every `## ` heading and every column.
+11. Leave out of the PR body and comments: local paths, raw logs, and the order things
+    were tried.
+12. Run `{{TOPA}} pr`.
+13. Re-read the final HIR, the evidence and the diff.
+14. Run `{{TOPA}} pr --reviewed`. Never use `gh pr create`, `gh pr edit` or merge.
+15. Report the PR link.
+16. Fix each CI failure and each review comment you agree with in this session.
+17. Answer each other review comment with a test, a measurement or a rule.
+18. After a fix or a base move, repeat steps 1-14.
 
 Exit: the PR is open and its link is reported.
 
@@ -240,7 +242,7 @@ Exit: the PR is open and its link is reported.
 
 ## Records
 
-`{{TOPA}} gate` checks these. Paths are relative to the round directory; each `command` is
+`{{TOPA}} gate` checks the structure of these records. Paths are relative to the round directory; each `command` is
 the exact command that wrote its non-empty `report`.
 
 ```json
