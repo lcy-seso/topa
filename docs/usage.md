@@ -1,7 +1,7 @@
 # Getting started
 
 You need x86_64 Linux with an NVIDIA driver for CUDA 13.2 or newer, Docker with the NVIDIA
-runtime, Claude Code (logged in), `gh`, `git`, `uv` and the
+runtime, Claude Code and the Codex CLI (both logged in), `gh`, `git`, `uv` and the
 [herdr TUI](https://herdr.dev/tui).
 
 ## 1. Set up Git and GitHub
@@ -36,7 +36,8 @@ mkdir -p ~/.topa && topa config --default > ~/.topa/config.toml
 ```
 
 Set `tileops_repo`, `tilefoundry_repo`, `worktree_root` and `fork_owner` in that file, and
-`gpu_exclude` to the cards topa must not use. Then:
+`gpu_exclude` to the cards topa must not use. A config file from an older topa fails to
+load until you delete its `tracker` line. Then:
 
 ```bash
 topa setup       # pulls the runner image and builds topa:agent
@@ -46,16 +47,23 @@ herdr server     # keep it running in its own terminal
 ## 4. Run a round
 
 ```bash
-topa hunt                  # ops behind on the nightly, with their issues
-topa issue new <Op>        # file or claim the op's issue on tile-ai/TileOPs
-topa round start <issue>   # start an agent on it
+topa hunt                  # the queue of ops behind, with their rows and rounds
+topa round start <Op>      # start an agent on one op of the queue
 ```
 
-The agent works on its own and opens a PR from your fork when it finds an improvement.
+`topa hunt` reads the newest `Perf-Tracker-<date>` page of the
+[TileOPs wiki](https://github.com/tile-ai/TileOPs/wiki/Perf-Tracker), which the nightly
+writes. The op's rows on that page, with its manifest, workloads, tests and benchmark, are
+the round's requirement; topa files no issue for it.
+
+The agent works on its own. It opens a PR from your fork when every row reaches its
+fastest comparator, or when it beats main without reaching the bar on every row; either
+way, no row may be slower than main. Otherwise
+it writes its stop records in `report.md` and opens no PR.
 Follow it with `topa round status`, read its screen with `herdr agent read <pane-id>`, and
 send it instructions with `topa round say <slug> "..."`.
 
-When the PR is merged or closed, or `report.md` says `no improvement`, end the round:
+When the PR is merged or closed, or `report.md` holds stop records, end the round:
 
 ```bash
 topa round stop <slug> --rm

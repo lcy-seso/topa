@@ -5,7 +5,7 @@ description: Operate running TileFoundry rounds — check status, message an age
 
 # topa round
 
-`topa` is `~/topa/.venv/bin/topa`. Run it by that path. State lives in `~/.topa/`:
+Run `topa` from `PATH`. State lives in `~/.topa/`:
 `ledger.jsonl` (every event), `rounds/<slug>/` (brief, evidence, `round.json`,
 `environment.md`), `config.toml`.
 
@@ -17,7 +17,7 @@ description: Operate running TileFoundry rounds — check status, message an age
 | one round's history | `topa round log <slug>` |
 | what the agent is doing | `herdr agent read <pane>` (pane from status) |
 | to tell the agent something | `topa round say <slug> "<text>"` |
-| a new round | `topa round start <issue>` (`--dry-run` first if unsure) |
+| a new round | `topa round start <Op>` (`--dry-run` first if unsure) |
 | to stop the agent, keep everything | `topa round stop <slug>` |
 | to release everything | `topa round stop <slug> --rm` |
 | to run a command against a TileOPs branch outside a round | `cd <worktree> && topa run <cmd>` |
@@ -41,6 +41,7 @@ description: Operate running TileFoundry rounds — check status, message an age
 
 ## Reviewing a round's PR
 
-Read `rounds/<slug>/report.md`, `provenance.json` and the PR. `topa gate --round <slug>`
-rechecks the evidence. Report the classification, the geometric mean against the rival,
-rows still behind, and any TileFoundry issue the round filed.
+Read `rounds/<slug>/report.md`, `provenance.json`, the PR and its four comments.
+`topa gate --round <slug>` rechecks the evidence. Report the result (`bar met` or
+`below bar`), the rows still behind their fastest comparator, any row slower than main,
+and any TileFoundry issue the round filed.

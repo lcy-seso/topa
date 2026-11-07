@@ -4,10 +4,8 @@
 | --- | --- |
 | `topa setup` | check tools, build `topa:agent`, include the round SSH entries |
 | `topa config [--default]` | print the settings in effect / print a default `config.toml` |
-| `topa grade` | grade every op of the newest nightly |
-| `topa hunt` | the behind ops, their issues, assignees and rounds |
-| `topa issue new <Op>...` | file or claim one issue per op |
-| `topa round start <issue>` | start a round |
+| `topa hunt [--cached]` | the newest Perf Tracker queue, with each op's rows and rounds |
+| `topa round start <Op>` | start a round on an op of the queue |
 | `topa round say <slug> "..."` | message the round's agent |
 | `topa round status` | every round, its agent state and PR |
 | `topa round log [<slug>]` | ledger events |

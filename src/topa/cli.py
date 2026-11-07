@@ -23,56 +23,27 @@ def _setup(args: argparse.Namespace) -> int:
     return 0
 
 
-def _grade(args: argparse.Namespace) -> int:
-    from topa.grade import fetch, grade
-
-    snapshot = fetch(refresh=not args.cached)
-    grades = [g for g in grade(snapshot) if not args.status or g.status in args.status]
-    if args.json:
-        _print_json([g.as_dict() for g in grades])
-        return 0
-    print(snapshot.label)
-    for g in grades:
-        ratio = f"{g.speedup:.3f}x" if g.speedup else "-"
-        print(f"{g.status:8} {ratio:>8}  {g.rival or '-':24} {g.op}")
-    return 0
-
-
 def _hunt(args: argparse.Namespace) -> int:
     from topa.hunt import hunt, table
 
-    snapshot, rows = hunt(config_module.load(), every=args.all, refresh=not args.cached)
+    page, rows = hunt(config_module.load(), refresh=not args.cached)
     if args.json:
-        _print_json({"snapshot": snapshot.label, "ops": rows})
+        _print_json({"wiki": page.url, "nightly_commit": page.commit, "ops": rows})
         return 0
-    print(snapshot.label)
+    print(f"{page.url}  nightly run {page.run_id}, commit {page.commit[:9]}")
     print()
     print(table(rows))
-    return 0
-
-
-def _issue_new(args: argparse.Namespace) -> int:
-    from topa.hunt import new_issues
-
-    results = new_issues(config_module.load(), args.ops, dry_run=args.dry_run)
-    if args.json or args.dry_run:
-        _print_json(results)
-    else:
-        for item in results:
-            state = "created" if item["created"] else "exists"
-            print(f"{item['op']}: #{item['issue']} {state} {item['url']} "
-                  f"(assignees: {', '.join(item.get('assignees') or []) or '-'})")
     return 0
 
 
 def _round_start(args: argparse.Namespace) -> int:
     from topa.round import start
 
-    meta = start(config_module.load(), args.issue, dry_run=args.dry_run, force=args.force)
+    meta = start(config_module.load(), args.op, dry_run=args.dry_run, force=args.force)
     if args.dry_run:
         _print_json(meta)
         return 0
-    print(f"round   {meta['round']}  #{meta['issue']}  {meta['branch']}  gpu {meta['gpu']}")
+    print(f"round   {meta['round']}  {meta['op']}  {meta['branch']}  gpu {meta['gpu']}")
     print(f"dir     {meta['round_dir']}")
     print(f"pane    {meta['pane']}")
     print(f"watch   herdr agent read {meta['pane']}")
@@ -100,7 +71,7 @@ def _round_status(args: argparse.Namespace) -> int:
     for row in rows:
         pr = row["pr"]
         pr_text = f"#{pr['number']} {pr['state'].lower()}" if pr else "-"
-        print(f"{row['round']:14} {row['state']:9} #{row['issue'] or '-':<6} gpu {row['gpu'] if row['gpu'] is not None else '-':<2} "
+        print(f"{row['round']:16} {row['state']:9} {row['op'] or '-':24} gpu {row['gpu'] if row['gpu'] is not None else '-':<2} "
               f"agent {row['agent'] or '-':8} pr {pr_text:14} {row['branch'] or ''}")
     return 0
 
@@ -168,29 +139,15 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--default", action="store_true", help="print a default config.toml")
     p.set_defaults(func=_config)
 
-    p = sub.add_parser("grade", help="grade every op of the newest nightly like the benchmark site")
-    p.add_argument("--status", nargs="*", choices=["ahead", "par", "behind", "unrated"])
-    p.add_argument("--cached", action="store_true", help="use the cached snapshot")
-    p.add_argument("--json", action="store_true")
-    p.set_defaults(func=_grade)
-
-    p = sub.add_parser("hunt", help="list behind ops with their issues and rounds")
-    p.add_argument("--all", action="store_true", help="every graded op, not only behind ones")
-    p.add_argument("--cached", action="store_true", help="use the cached snapshot")
+    p = sub.add_parser("hunt", help="the wiki's perf queue, with each op's rows and rounds")
+    p.add_argument("--cached", action="store_true", help="read the cached wiki clone without pulling it")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_hunt)
 
-    issue = sub.add_parser("issue", help="TileOPs issues").add_subparsers(dest="issue_command", required=True)
-    p = issue.add_parser("new", help="file one perf issue per op, assigned to you, under the tracker")
-    p.add_argument("ops", nargs="+", metavar="OP")
-    p.add_argument("--dry-run", action="store_true", help="print the issues instead of filing them")
-    p.add_argument("--json", action="store_true")
-    p.set_defaults(func=_issue_new)
-
     rounds = sub.add_parser("round", help="start, steer, inspect and stop rounds").add_subparsers(
         dest="round_command", required=True)
-    p = rounds.add_parser("start", help="start a round on a TileOPs issue")
-    p.add_argument("issue", type=int)
+    p = rounds.add_parser("start", help="start a round on an op of the wiki queue")
+    p.add_argument("op")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--force", action="store_true", help="start beyond max_rounds")
     p.set_defaults(func=_round_start)

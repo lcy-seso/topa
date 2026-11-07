@@ -6,31 +6,35 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from topa import gate, ledger
-from topa.grade import BEHIND, grade_op, parse
+from topa import config, gate, ledger, wiki
 from topa.hook import decide
-from topa.issue import Issue, branch_name, round_slug
 from topa.container import foreign_files
-from topa.round import CLEAR_CLAUDE_ENV, kit, render
+from topa.round import CLEAR_CLAUDE_ENV, kit, render, round_slug, start
 
 HIR = 'class Operator:\n    def kernel(self, x):\n        return tf.schedule((x,), op=T.cuda.sm90.Wgmma(n=16))\n'
-OTHER_HIR = "class Operator:\n    def kernel(self, x):\n        return x\n"
+PAGE = Path(__file__).parent / "fixtures" / "Perf-Tracker-2026-11-06.md"
+PAGE_URL = "https://github.com/tile-ai/TileOPs/wiki/Perf-Tracker-2026-11-06"
 
 
-def filled_template(classification: str) -> str:
-    """The kit's PR template with every placeholder filled, as a round fills it."""
-    text = (kit() / "pr-template.md").read_text()
-    text = "# [Perf][foundry][Test] Schedule the kernel\n" + text.split("\n", 1)[1]
+def defaults(**changes) -> config.Config:
+    values = {name: config._coerce(name, value) for name, value in config.DEFAULTS.items()}
+    return config.Config(**{**values, **changes})
+
+
+def page(text: str | None = None) -> wiki.Page:
+    return wiki.parse(PAGE.read_text() if text is None else text, "2026-11-06", PAGE_URL)
+
+
+def filled(name: str, result: str = "bar met") -> str:
+    """A kit PR file with every placeholder filled, as a round fills it."""
+    text = (kit() / name).read_text()
+    text = re.sub(r"^# \[Perf\].*", "# [Perf][foundry][Test] Schedule the kernel", text)
     text = re.sub(r"<work/final_hir\.py[^\n]*>", HIR.rstrip("\n"), text)
-    for placeholder, value in {
-        "sha256:<image digest>": "sha256:" + "a" * 64,
-        "<external stack>": "fa3",
-        "<marker>": "&#x1F7E2;",
-        "**<measured SOTA | improvement without SOTA>**": f"**{classification}**",
-        "`<exact public TileOPs Op name>`": "`TestFwdOp`",
-    }.items():
-        text = text.replace(placeholder, value)
+    text = text.replace("sha256:<image digest>", "sha256:" + "a" * 64)
+    text = text.replace("**<bar met | below bar>**", f"**{result}**")
+    text = re.sub(r"^<[^\n]*>$", "1", text, flags=re.MULTILINE)
     return gate.PLACEHOLDER.sub("1", text)
 
 
@@ -57,88 +61,146 @@ class GateTests(unittest.TestCase):
         git(self.repo, "commit", "-qam", "kernel")
 
         files = {
-            "work/a.py": OTHER_HIR, "work/final_hir.py": HIR, "work/twin.py": "twin\n",
-            "e/check.json": '{"passed": true}', "e/a.json": "{\"ok\": 1}", "e/b.json": "{\"ok\": 1}", "e/log": "ok\n",
+            "work/final_hir.py": HIR, "work/twin.py": "twin\n", "work/final.tir": "tir\n",
+            "e/pass.json": '{"passed": true}', "e/twin.json": '{"passed": true}', "e/analysis.json": '{"ok": 1}', "e/log": "ok\n",
             "report.md": "ok\n", "findings.json": '{"findings": [], "issue": null}',
-            "pr-template.md": filled_template("improvement without SOTA"),
+            "pr-template.md": filled("pr-template.md"), "pr-comments.md": filled("pr-comments.md"),
         }
         for name, text in files.items():
             (self.round / name).parent.mkdir(parents=True, exist_ok=True)
             (self.round / name).write_text(text)
 
-        def iteration(hir: str, report: str, verdict: str) -> dict:
-            return {"name": hir, "hir": hir, "hypothesis": "h", "placement": "p", "measured_ms": 1.0,
-                    "verdict": verdict, "analysis": {"command": f"tilefoundry analyze {hir} --json", "report": report}}
+        def analyze(flag: str, **fields) -> dict:
+            return {**fields, "command": f"tilefoundry analyze work/final_hir.py:M out {flag} --json",
+                    "report": "e/analysis.json"}
 
         run = {"command": "pytest x", "report": "e/log"}
         self.provenance = {
-            "tileops_base": self.base, "tilefoundry_base": "b" * 40,
-            "classification": "improvement without SOTA", "final_hir": "work/final_hir.py",
-            "runtime_twin": "work/twin.py", "production_kernel": "src/tileops/kernels/k.py:K",
-            "tilefoundry_check": {"command": "tilefoundry check work/twin.py", "report": "e/check.json"},
-            "iterations": [iteration("work/a.py", "e/a.json", "rejected"),
-                           iteration("work/final_hir.py", "e/b.json", "kept")],
-            "decisions": [{"analysis_fact": "a", "hir_change": "h", "kernel_change": "k"}],
-            "correctness": run, "benchmark": run, "profile": run,
+            "tileops_base": self.base, "tilefoundry_base": "b" * 40, "result": "bar met",
+            "candidate_commit": git(self.repo, "rev-parse", "HEAD"),
+            "final_hir": "work/final_hir.py", "runtime_twin": "work/twin.py",
+            "production_kernel": "src/tileops/kernels/k.py:K",
+            "reference_check": {"command": "tilefoundry check work/final_hir.py:M --expected r.pt --json e/pass.json",
+                                "report": "e/pass.json"},
+            "floor": [analyze("--roofline", workload="1")],
+            "placements": [analyze("--performance", placement="a", chosen=True),
+                           analyze("--performance", placement="b", chosen=False)],
+            "schedule": {"command": "tilefoundry schedule finalize work/final_hir.py:M work/final.tir",
+                         "report": "work/final.tir"},
+            "twin_check": {"command": "tilefoundry check work/twin.py:T --json e/twin.json", "report": "e/twin.json"},
+            "iterations": [{"change": "c", "basis": "b", "predicted_us": 1.0, "measured_us": 1.0}],
+            "tests": run, "benchmark": run, "reviews": ["e/log"],
         }
         self.write_provenance()
+        self.workloads, self.measured = ("1",), 1
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+
+    def validate(self) -> dict:
+        return gate.validate_round(self.round, self.repo, workloads=self.workloads, measured=self.measured)
 
     def write_provenance(self) -> None:
         (self.round / "provenance.json").write_text(json.dumps(self.provenance))
 
     def test_complete_round_passes(self) -> None:
-        self.assertEqual(gate.validate_round(self.round, self.repo)["classification"], "improvement without SOTA")
+        self.assertEqual(self.validate()["result"], "bar met")
 
-    def pr(self, edit) -> None:
-        """Rewrite the round's filled-in PR template through *edit*."""
-        path = self.round / "pr-template.md"
-        path.write_text(edit(path.read_text()))
+    def edit(self, name: str, change) -> None:
+        path = self.round / name
+        path.write_text(change(path.read_text()))
+
+    def test_tie_within_a_timer_step_meets_the_bar(self) -> None:
+        self.edit("pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 2 | 1.02 | 0.5 | 1 | 1 | 0.98 |")
+                  .replace("| timer step (us) | 1 |", "| timer step (us) | 0.02 |"))
+        self.assertEqual(self.validate()["result"], "bar met")
+
+    def test_tie_at_the_dram_floor_meets_the_bar(self) -> None:
+        self.edit("pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 2 | 1 | 1 | 1 | 0.5 | 0.5 |")
+                  .replace("| timer step (us) | 1 |", "| timer step (us) | 0.02 |"))
+        self.assertEqual(self.validate()["result"], "bar met")
 
     def test_unfilled_template_fails(self) -> None:
-        (self.round / "pr-template.md").write_text((kit() / "pr-template.md").read_text())
-        with self.assertRaisesRegex(gate.GateError, "placeholder"):
-            gate.validate_round(self.round, self.repo)
+        for name in ("pr-template.md", "pr-comments.md"):
+            with self.subTest(name):
+                self.tearDown()
+                self.setUp()
+                (self.round / name).write_text((kit() / name).read_text())
+                with self.assertRaisesRegex(gate.GateError, "placeholder"):
+                    self.validate()
 
     def test_each_defect_fails(self) -> None:
         finding = {"id": "f", "classification": "c", "command": "c", "expected": "e", "actual": "a",
                    "workaround_cost": "w", "public_surface": "p", "affected_workloads": [], "reproducer": "e/log"}
+        p = self.provenance
         cases = {
-            "at least two": lambda: self.provenance.update(iterations=self.provenance["iterations"][1:]),
+            "reference_check must record a tilefoundry command": lambda: p["reference_check"].update(command="python check.py"),
+            "at least two placements": lambda: p.update(placements=p["placements"][:1]),
+            "positive measured_us": lambda: p["iterations"][0].update(measured_us=0),
+            "reviews must be a non-empty list": lambda: p.update(reviews=[]),
             "one tile-ai/TileFoundry issue": lambda: (self.round / "findings.json").write_text(
                 json.dumps({"findings": [finding], "issue": "https://github.com/tile-ai/TileFoundry/pull/1"})),
             "null when there is no finding": lambda: (self.round / "findings.json").write_text(
                 '{"findings": [], "issue": "https://github.com/tile-ai/TileFoundry/issues/1"}'),
             "exact final HIR": lambda: (self.round / "work/final_hir.py").write_text(HIR + "# changed\n"),
-            "title as a `# ` line": lambda: self.pr(lambda t: t.split("\n", 1)[1]),
-            "placeholder <benchmark>": lambda: self.pr(lambda t: t.replace("Method: 1", "Method: <benchmark>")),
-            "Operator: `<Op name>`": lambda: self.pr(lambda t: t.replace("`TestFwdOp`", "TestFwdOp")),
-            "full sha256": lambda: self.pr(lambda t: t.replace("a" * 64, "a" * 12)),
-            "geometric mean row": lambda: self.pr(
-                lambda t: "\n".join(line for line in t.splitlines() if not line.startswith("| geometric mean"))),
-            "no comparison marker": lambda: self.pr(lambda t: t.replace("&#x1F7E2;", "")),
-            "classification of provenance.json": lambda: self.pr(
-                lambda t: t.replace("**improvement without SOTA**", "**measured SOTA**")),
-            "forbidden paths": lambda: (Path(self.repo, "bench.py").write_text("x\n"),
-                                        git(self.repo, "add", "."), git(self.repo, "commit", "-qm", "b")),
+            "title as a `# ` line": lambda: self.edit("pr-template.md", lambda t: t.split("\n", 1)[1]),
+            "placeholder ```text": lambda: self.edit("pr-template.md",
+                                                     lambda t: t.replace("```text\n1\n```", "```text\n<x>\n```")),
+            "placeholder <x>": lambda: self.edit("pr-template.md", lambda t: t.replace("## Summary\n\n- 1", "## Summary\n\n- <x>")),
+            "Summary, Test plan": lambda: self.edit("pr-template.md", lambda t: t.replace("## Test plan\n", "")),
+            "TileFoundry Findings, in order": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("## TileFoundry Findings", "## Findings")),
+            "full sha256": lambda: self.edit("pr-comments.md", lambda t: t.replace("a" * 64, "a" * 12)),
+            "main \\(us\\)": lambda: self.edit("pr-comments.md", lambda t: t.replace("| main (us) ", "| ")),
+            "row 'OtherFwdOp w' is slower than main": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("| --- | --- | ---: | ---: |\n| 1 | 1 | 1 | 1 |", "| --- | --- | ---: | ---: |\n| OtherFwdOp | w | 1 | 2 |")),
+            "the result of provenance.json": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("**bar met**", "**below bar**")),
+            "below bar result must beat main": lambda: (p.update(result="below bar"), self.edit(
+                "pr-comments.md", lambda t: t.replace("**bar met**", "**below bar**"))),
+            "more than one timer step behind": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 1 | 1 | 0.5 | 1 | 0.5 | 0.5 |")
+                .replace("| timer step (us) | 1 |", "| timer step (us) | 0.02 |")),
+            "rows 1 appear more than once": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 1 | 1 | 1 | 1 | 1 | 1 |\n| 1 | 2 | 1 | 1 | 1 | 1 | 1 |")),
+            "timer step must be a positive": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("| timer step (us) | 1 |", "| timer step (us) | x |")),
+            "states ratio 1.0, its times give 0.5000": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 1 | 1 | 1 | 1 | 0.5 | 1 |")),
+            "other-ops table needs": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("| Op | Workload | main (us) | candidate (us) |", "| Op | Workload | main (us) | new (us) |")),
+            "needs positive times": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | inf | 1 | 1 | 1 | 1 | 1 |")),
+            "row '1' is slower than main": lambda: self.edit(
+                "pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 1 | 2 | 1 | 1 | 1 | 1 |")),
+            "the results table lacks the rows behind w2": lambda: (
+                setattr(self, "workloads", ("1", "w2")), p["floor"].append({**p["floor"][0], "workload": "w2"})),
+            "the op has 2 measured rows": lambda: setattr(self, "measured", 2),
+            "floor lacks the rows behind w2": lambda: setattr(self, "workloads", ("1", "w2")),
+            "candidate_commit must be the commit": lambda: p.update(candidate_commit="c" * 40),
+            "positive predicted_us": lambda: p["iterations"][0].pop("predicted_us"),
+            "exposes a local path": lambda: self.edit("pr-comments.md", lambda t: t + "/home/x/log\n"),
+            "forbidden paths": lambda: (Path(self.repo, "benchmarks").mkdir(),
+                                        Path(self.repo, "benchmarks/b.py").write_text("x\n"),
+                                        git(self.repo, "add", "."), git(self.repo, "commit", "-qm", "b"),
+                                        p.update(candidate_commit=git(self.repo, "rev-parse", "HEAD"))),
         }
         for message, defect in cases.items():
             with self.subTest(message):
                 self.tearDown()
                 self.setUp()
+                p = self.provenance
                 defect()
                 self.write_provenance()
                 with self.assertRaisesRegex(gate.GateError, message):
-                    gate.validate_round(self.round, self.repo)
+                    self.validate()
 
 
 class HookTests(unittest.TestCase):
     def test_routing(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             round_dir = Path(folder)
-            (round_dir / "round.json").write_text('{"alias": "topa-i1-r1"}')
+            (round_dir / "round.json").write_text('{"alias": "topa-x-r1"}')
             event = lambda command: {"tool_input": {"command": command}, "cwd": folder}
             for command in (
                 "git status && ls",
@@ -146,6 +208,7 @@ class HookTests(unittest.TestCase):
                 'gh issue view 1 2>&1 | head -300; echo "rc=$?"',
                 'cd /x && grep -n "hir\\|iteration" gate.py | head -60',
                 "git log --oneline\ncat notes.md > /dev/null 2>&1",
+                'codex exec --sandbox read-only "review" < /dev/null > evidence/review-1.md 2>&1',
             ):
                 self.assertIsNone(decide(event(command), round_dir), command)
             for command in (
@@ -157,32 +220,57 @@ class HookTests(unittest.TestCase):
             ):
                 routed = decide(event(command), round_dir)
                 assert routed is not None, command
-                self.assertTrue(routed["hookSpecificOutput"]["updatedInput"]["command"].startswith("ssh -T topa-i1-r1 "))
+                self.assertTrue(routed["hookSpecificOutput"]["updatedInput"]["command"].startswith("ssh -T topa-x-r1 "))
 
 
-class GradeTests(unittest.TestCase):
-    def test_rival_named_most_often_and_its_geomean(self) -> None:
-        def case(config: str, props: dict) -> str:
-            rows = "".join(f'<property name="{k}" value="{v}" />' for k, v in props.items())
-            return f'<testcase name="t[{config}]"><properties><property name="op" value="A" />{rows}</properties></testcase>'
+class WikiTests(unittest.TestCase):
+    def test_page(self) -> None:
+        parsed = page()
+        self.assertEqual((parsed.run_id, parsed.commit), ("42257687830", "6da068de6055db5e1f31f43fba83860d257f0d98"))
+        self.assertEqual([op.name for op in parsed.queue[:3]], ["GQAVarlenFwdOp", "GroupedGEMMFwdOp", "SoftmaxFwdOp"])
+        self.assertEqual(len(parsed.queue), 19)
+        op = parsed.op("GroupedGEMMFwdOp")
+        self.assertEqual((op.category, op.label, op.worst, op.measured, op.nightlies, op.benchmark),
+                         ("gemm", "P2", 0.8588, 10, 2, "benchmarks.ops.bench_grouped_gemm"))
+        self.assertEqual(op.rows[0], wiki.Row("qwen3-30b-ep8-skew-down-bfloat16", 48.16, "quack", 41.361, 0.8588))
 
-        with tempfile.TemporaryDirectory() as folder:
-            xml = Path(folder, "b.xml")
-            xml.write_text("<testsuites><testsuite>" + "".join((
-                case("w1", {"tileops_device_busy_ms": 1, "fla_device_busy_ms": 0.5, "torch-ref_device_busy_ms": 0.1}),
-                case("w2", {"tileops_device_busy_ms": 1, "fla_device_busy_ms": 9, "fla_ratio": 0.8}),
-                case("w3", {"tileops_device_busy_ms": 1, "torch_device_busy_ms": 0.9, "baseline_device_busy_ms": 0.1}),
-            )) + "</testsuite></testsuites>")
-            g = grade_op("A", parse(xml))
-        self.assertEqual((g.rival, g.status), ("fla", BEHIND))
-        self.assertAlmostEqual(g.speedup, (0.5 * 0.8) ** 0.5)
+    def test_unexpected_format_fails_loudly(self) -> None:
+        text = PAGE.read_text()
+        cases = {
+            "no 'Nightly run": text.replace("Nightly run [", "Run ["),
+            "no table with the header": text.replace("| Worst ratio |", "| Worst |"),
+            "unexpected row": text.replace("| 0.8119 | 2 of 63 |", "| 0.8119 | 2/63 |"),
+            "no '### SoftmaxFwdOp'": text.replace("### SoftmaxFwdOp", "### Softmax"),
+            "1 rows, the queue says 2": re.sub(r"\| `llama-8b-chunk-decodes-float16` .*\n", "", text),
+            "the line under the header": text.replace("| ---: | --- | --- | --- | ---: | ---: | ---: |", ""),
+            "has ops the queue lacks: ReciprocalFwdOp": re.sub(r"\| 19 \| .*\n", "", text),
+            "repeated '### DivFwdOp' heading": text + "\n### DivFwdOp\n",
+            "repeated '## Queue' heading": text + "\n## Queue\n",
+            "DivFwdOp is listed twice": text.replace("| 5 | [RMSNormFwdOp](#rmsnormfwdop) |", "| 5 | [DivFwdOp](#divfwdop) |"),
+        }
+        for message, broken in cases.items():
+            with self.subTest(message), self.assertRaisesRegex(wiki.FormatError, re.escape(message)):
+                page(broken)
 
 
 class RoundTests(unittest.TestCase):
-    def test_names(self) -> None:
-        issue = Issue(7, "[Kernel] GemmFp8FwdOp: x", "open", (), (), "u", 1)
-        self.assertEqual(round_slug(7, [{"round": "i7-r1", "issue": 7}]), "i7-r2")
-        self.assertEqual(branch_name(issue, "i7-r2", "gemm"), "feat/gemm/i7-r2")
+    def test_slug(self) -> None:
+        self.assertEqual(round_slug("SoftmaxFwdOp", [{"round": "softmaxfwd-r1"}]), "softmaxfwd-r2")
+        long = round_slug("FusedAddRMSNormPerTokenQuantFwdOp", [])
+        self.assertRegex(long, r"^[a-z][a-z0-9_-]{0,31}$")
+
+    def test_start_claims_one_round_per_op(self) -> None:
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch("topa.ledger.LEDGER", Path(folder, "ledger.jsonl")), \
+                mock.patch("topa.sh.require"), mock.patch("topa.sh.github_remote"), \
+                mock.patch("topa.round.topa_binary"):
+            plan = start(defaults(), "SoftmaxFwdOp", page=page(), dry_run=True)
+            self.assertEqual((plan["round"], plan["branch"]), ("softmaxfwd-r1", "perf/reduction/softmaxfwd-r1"))
+            ledger.append("create", round="softmaxfwd-r1", op="SoftmaxFwdOp")
+            with self.assertRaisesRegex(SystemExit, "round softmaxfwd-r1 already works SoftmaxFwdOp"):
+                start(defaults(), "SoftmaxFwdOp", page=page(), dry_run=True)
+            with self.assertRaisesRegex(SystemExit, "is not in the queue"):
+                start(defaults(), "NoSuchFwdOp", page=page(), dry_run=True)
 
     def test_brief_renders_every_placeholder(self) -> None:
         template = (kit() / "brief.md").read_text()
@@ -195,8 +283,8 @@ class RoundTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder, "ledger.jsonl")
             for event, fields in (("create", {"pane": "w1:p1"}), ("start", {}), ("say", {"text": "hi"})):
-                ledger.append(event, path, round="i1-r1", **fields)
-            view = ledger.rounds(path)["i1-r1"]
+                ledger.append(event, path, round="x-r1", **fields)
+            view = ledger.rounds(path)["x-r1"]
         self.assertEqual((view["state"], view["pane"], "text" in view), ("running", "w1:p1", False))
 
 
