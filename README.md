@@ -1,10 +1,12 @@
 <p align="center">
-  <img src="assets/readme-banner.svg" alt="TOPA: TileFoundry and TileOps, a Path to Autonomous kernel engineering" width="100%">
+  <img src="assets/banner.svg" alt="TOPA: TileFoundry and TileOPs, a Path to Autonomous kernel engineering" width="100%">
 </p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
+  <a href="https://github.com/tile-ai/TileFoundry"><img src="https://img.shields.io/badge/TileFoundry-0891b2.svg" alt="TileFoundry"></a>
+  <a href="https://github.com/tile-ai/TileOPs"><img src="https://img.shields.io/badge/TileOPs-8250df.svg" alt="TileOPs"></a>
 </p>
 
 Agents build [TileOPs](https://github.com/tile-ai/TileOPs) kernels with
