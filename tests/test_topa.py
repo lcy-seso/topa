@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from topa import config, gate, ledger, review, wiki
+from topa import config, gate, history, ledger, review, wiki
 from topa.container import foreign_files
 from topa.hook import decide
 from topa.round import CLEAR_CLAUDE_ENV, _issue_work, brief, drop_branch, kit, render, round_slug, start
@@ -34,7 +34,8 @@ def filled(name: str, result: str = "bar met", kind: str = "perf") -> str:
     text = re.sub(r"^# \[.*", f"# {title}", text)
     text = re.sub(r"<work/final_hir\.py[^\n]*>", HIR.rstrip("\n"), text)
     text = text.replace("sha256:<image digest>", "sha256:" + "a" * 64)
-    text = text.replace("**<bar met | below bar>**", f"**{result}**")
+    text = text.replace("**<bar met | below bar>**", f"**{result}**").replace("<bar met | below bar>", result)
+    text = text.replace("Op: <Op>", "Op: AFwdOp").replace("<benchmark module>", "benchmarks.ops.bench_a")
     text = re.sub(r"^<[^\n]*>$", "1", text, flags=re.MULTILINE)
     return gate.PLACEHOLDER.sub("1", text)
 
@@ -107,6 +108,14 @@ class GateTests(unittest.TestCase):
     def test_complete_round_passes(self) -> None:
         self.assertEqual(self.validate()["result"], "bar met")
 
+    def test_trailers_name_the_round_op(self) -> None:
+        kwargs = {"workloads": self.workloads, "measured": self.measured, "benchmark": "benchmarks.ops.bench_a"}
+        self.assertEqual(gate.validate_round(self.round, self.repo, op="AFwdOp", **kwargs)["result"], "bar met")
+        with self.assertRaisesRegex(gate.GateError, "says `Op: AFwdOp`; the round records `BFwdOp`"):
+            gate.validate_round(self.round, self.repo, op="BFwdOp", **kwargs)
+        self.edit("pr-template.md", lambda t: t.split("\nOp:")[0] + "\n")
+        self.assertEqual(gate.validate_round(self.round, self.repo, trailers=False, **kwargs)["result"], "bar met")
+
     def edit(self, name: str, change) -> None:
         path = self.round / name
         path.write_text(change(path.read_text()))
@@ -152,7 +161,7 @@ class GateTests(unittest.TestCase):
                     gate.validate_round(self.round, self.repo, kind="general", issue=7)
 
     def test_perf_issue_round_takes_its_rows_from_provenance(self) -> None:
-        self.edit("pr-template.md", lambda t: t + "\nRefs #7\n")
+        self.edit("pr-template.md", lambda t: t.replace("\n\nOp:", "\nRefs #7\n\nOp:"))
         self.provenance["workloads"] = ["1"]
         self.write_provenance()
         self.assertEqual(gate.validate_round(self.round, self.repo, issue=7)["result"], "bar met")
@@ -191,6 +200,12 @@ class GateTests(unittest.TestCase):
                                                      lambda t: t.replace("```text\n1\n```", "```text\n<x>\n```")),
             "placeholder <x>": lambda: self.edit("pr-template.md", lambda t: t.replace("## Summary\n\n- 1", "## Summary\n\n- <x>")),
             "Summary section alone": lambda: self.edit("pr-template.md", lambda t: t + "\n## Benchmark\n\n- 1\n"),
+            "exactly the `Op:`, `Benchmark:`, `Result:` lines": lambda: self.edit(
+                "pr-template.md", lambda t: t.replace("Benchmark: benchmarks.ops.bench_a\n", "")),
+            "end with one paragraph of exactly": lambda: self.edit(
+                "pr-template.md", lambda t: t + "\nRefs #1\n"),
+            "says `Result: below bar`; the round records `bar met`": lambda: self.edit(
+                "pr-template.md", lambda t: t.replace("Result: bar met", "Result: below bar")),
             "TileFoundry Findings, in order": lambda: self.edit(
                 "pr-comments.md", lambda t: t.replace("## TileFoundry Findings", "## Findings")),
             "full sha256": lambda: self.edit("pr-comments.md", lambda t: t.replace("a" * 64, "a" * 12)),
@@ -352,7 +367,7 @@ class RoundTests(unittest.TestCase):
                 start(defaults(), issue=2812, dry_run=True)
             values = {name: name for name in ("SLUG", "ROUND_DIR", "UPSTREAM", "BRANCH", "TILEOPS_BASE",
                                                "TILEOPS_WORKTREE", "TILEFOUNDRY_BASE", "TILEFOUNDRY_SOURCE",
-                                               "KNOWLEDGE", "TOPA")}
+                                               "KNOWLEDGE", "TOPA", "PRIOR_ATTEMPTS")}
             text = brief("general", values | _issue_work(defaults(), 2812)[1])
             self.assertIn("> ## Repro\n> x = 1e36", text)
             self.assertIn("`Closes #2812`", text)
@@ -466,6 +481,67 @@ class ReviewTests(unittest.TestCase):
         fresh = review.select(comments, review.commentable(DIFF), posted)
         self.assertEqual([(c["path"], c["body"]) for c in fresh],
                          [("tests/t.py", "A person said this."), ("gone.py", "Old finding.")])
+
+
+class HistoryTests(unittest.TestCase):
+    def test_prs_match_on_op_benchmark_or_workload_newest_first(self) -> None:
+        prs = [{"number": 2172, "title": "[Perf][GEMM] a", "state": "CLOSED", "body": "`bench_gemm` on qwen2.5-7b-b64"},
+               {"number": 2834, "title": "[Perf][GEMM] b", "state": "MERGED", "body": "GEMMFwdOp rows"},
+               {"number": 1567, "title": "[Perf][GroupedGemm] c", "state": "CLOSED", "body": "bench_grouped_gemm"},
+               {"number": 2900, "title": "[Feat] GEMMFwdOp knobs", "state": "OPEN", "body": None}]
+        prs += [{"number": 2950, "title": "[Perf][foundry][GEMM] d", "state": "MERGED",
+                 "body": "- bench_gemm tile\n\nOp: GEMMFwdOp\nBenchmark: benchmarks.ops.bench_gemm\nResult: below bar"},
+                {"number": 2960, "title": "[Perf][foundry][GEMM] e", "state": "MERGED",
+                 "body": "- GEMMFwdOp shares it\n\nOp: BMMFwdOp\nResult: bar met"},
+                {"number": 2970, "title": "[Perf][foundry][GEMM] f", "state": "OPEN",
+                 "body": "- x\r\n\r\nOp: GEMMFwdOp \t\r\nResult: bar met\r\n"}]
+        found = history.matching_prs(prs, "GEMMFwdOp", "benchmarks.ops.bench_gemm", ["qwen2.5-7b-b64-bfloat16"])
+        self.assertEqual([(pr["number"], pr["matched"], pr["result"]) for pr in found],
+                         [(2970, ["Op line"], "bar met"), (2950, ["Op line"], "below bar"), (2834, ["op"], None),
+                          (2172, ["benchmark", "workload qwen2.5-7b-b64"], None)])
+        self.assertIn("merged, below bar: [Perf][foundry][GEMM] d", history.render(
+            {"op": "GEMMFwdOp", "pull_requests": found, "search_error": None, "local": [], "local_scope": "here"}))
+
+    def test_local_attempts_skip_other_ops_and_malformed_rounds(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            rounds = Path(folder)
+            for slug, op, files in [
+                ("gemm-r1", "GEMMFwdOp", {"report.md": "## Stop records\n" + "x" * 2000 + "\n## Other\n",
+                                          "provenance.json": '{"result": "below bar"}'}),
+                ("gemm-r2", "GEMMFwdOp", {"provenance.json": "null"}),
+                ("gemm-r3", "GEMMFwdOp", {}),
+                ("softmax-r1", "SoftmaxFwdOp", {}),
+            ]:
+                (rounds / slug).mkdir()
+                for name, text in {"round.json": json.dumps({"round": slug, "op": op}), **files}.items():
+                    (rounds / slug / name).write_text(text)
+            for slug, text in [("broken", "{"), ("listed", "[]")]:
+                (rounds / slug).mkdir()
+                (rounds / slug / "round.json").write_text(text)
+            found = {a["round"]: a for a in history.local_attempts(rounds, "GEMMFwdOp", "tile-ai/TileOPs", "gemm-r3")}
+        self.assertEqual(sorted(found), ["gemm-r1", "gemm-r2"])
+        self.assertEqual(found["gemm-r1"]["result"], "below bar")
+        self.assertTrue(found["gemm-r1"]["excerpts"]["Stop records"].endswith("[...]"))
+        self.assertEqual((found["gemm-r2"]["result"], found["gemm-r2"]["report"]), (None, None))
+
+    def test_render_is_bounded_and_says_when_the_search_failed(self) -> None:
+        error = history.sh.CommandError(["gh"], 1, "HTTP 502")
+        with tempfile.TemporaryDirectory() as folder, mock.patch("topa.config.HOME", Path(folder)), \
+                mock.patch("topa.history.sh.run", side_effect=error):
+            failed = history.collect(defaults(), "AOp", "benchmarks.ops.bench_a", [], exclude="x")
+        self.assertIn("PR search unavailable: HTTP 502", history.render(failed))
+        prs = [{"number": n, "title": "[Perf] t", "state": "MERGED", "url": "u", "matched": ["op"]}
+               for n in range(20, 0, -1)]
+        prs[0]["matched"] = [f"workload w{i}" for i in range(2000)]
+        prs[1]["title"] = "[Perf] " + "t" * 20000
+        text = history.render(failed | {"search_error": None, "search_truncated": True, "pull_requests": prs})
+        self.assertEqual(text.count("\n- [#"), history.MAX_PRS)
+        self.assertIn(f"{20 - history.MAX_PRS} older matches are in `prior-attempts.json`", text)
+        shown = history.MAX_REASONS
+        self.assertIn(f"workload w{shown - 1}, {2000 - shown} more)", text)
+        self.assertIn(f"stopped at GitHub's {history.SEARCH_CAP} results", text)
+        self.assertIn("No earlier round of this op", text)
+        self.assertLessEqual(len(text), history.MAX_SECTION + 100)
 
 
 if __name__ == "__main__":

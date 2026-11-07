@@ -16,6 +16,14 @@ Apply to every TileOPs PR. Rules TileOPs documents or checks in CI are cited, no
 - Cite the source row when a finding breaks a rule from this table.
 - Name the failing criterion in the comment.
 
+## External PRs
+
+Apply when `association` in `pr.json` is not `OWNER`, `MEMBER` or `COLLABORATOR`.
+
+- Comment only on correctness faults the diff introduces.
+- Put a fault the base branch already has, or a missing test, in the summary as a maintainer follow-up.
+- Open the summary with `Approve.` when no comment remains.
+
 ## Correctness
 
 | Criterion | Pass | Fail |
@@ -24,6 +32,7 @@ Apply to every TileOPs PR. Rules TileOPs documents or checks in CI are cited, no
 | Reachable | each added function, branch or schedule runs on some call of a public op, a benchmark or a script | it runs only from a test, or never |
 | Tested | a test reaches each added path on an input where a fault there changes the asserted output | no test does |
 | Coverage kept | When a case is removed: every path, dtype and boundary still in the code stays reached by some case | one loses its last case |
+| Refusal gap | When the architectures or inputs an implementation serves change: each input in the signature that every implementation now refuses has one test asserting the refusal | no test asserts it (`docs/design/testing.md` § Tests) |
 
 ## Code
 

@@ -24,6 +24,17 @@ Optimize the op with [TileFoundry](https://github.com/tile-ai/TileFoundry) towar
 - Do not change `benchmarks/`, `workloads/`, `src/tileops/manifest/`, `scripts/` or
   `.github/`; `topa gate` rejects such a diff.
 
+## Prior attempts
+
+{{PRIOR_ATTEMPTS}}
+
+- Read the attempts that bear on the rows before choosing experiments; `prior-attempts.json`
+  holds the full list when topa collected one. Check an earlier conclusion against this
+  round's TileOPs, TileFoundry and GPU before relying on it.
+- Under `## Prior attempts used` in `report.md`, cite each attempt that changes your plan
+  and say whether you reuse, skip or retest it; for a retest, name the condition that
+  changed. Otherwise write `none relevant` or `history unavailable`.
+
 ## Stages
 
 - Find TileFoundry's commands with `tilefoundry --help`, each subcommand's `--help`,
@@ -134,7 +145,7 @@ Title: `[Perf][foundry][<Family>] <imperative description>`.
 
 | File | Becomes | Holds |
 | --- | --- | --- |
-| `pr-template.md` | the title (line 1, same as the commit) and the body, which becomes the squash commit's message | Summary alone: one-line bullets of the kernel change and the gap's root cause |
+| `pr-template.md` | the title (line 1, same as the commit) and the body, which becomes the squash commit's message | Summary alone: one-line bullets of the kernel change and the gap's root cause, then the `Op:`, `Benchmark:` and `Result:` lines, which later rounds search |
 | `pr-comments.md` | one comment per `## ` section | the sections below |
 
 - Test Plan: the `scripts/test_node_delta.py` output and the path each new case guards.

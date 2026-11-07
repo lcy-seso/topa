@@ -20,7 +20,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any, Iterable
 
-from topa import container, foundry, ledger, sh, wiki
+from topa import container, foundry, history, ledger, sh, wiki
 from topa.config import Config
 
 PROMPT = ("Read `brief.md` in the current working directory and complete it. A human may "
@@ -227,8 +227,8 @@ def _wiki_work(op: wiki.Op, page: wiki.Page) -> tuple[dict[str, Any], dict[str, 
         f"`device_busy_ms` in microseconds; ratio = comparator / TileOPs):\n\n{op.table()}\n\n"
         f"The op is `{op.name}`. Take these rows and the op's manifest entry, Op, workloads, reference, "
         "tests and benchmark as the whole requirement.")
-    plan = {"kind": "perf", "op": op.name, "wiki": page.url, "nightly_commit": page.commit,
-            "workloads": [row.workload for row in op.rows], "measured": op.measured}
+    plan = {"kind": "perf", "op": op.name, "benchmark": op.benchmark, "wiki": page.url,
+            "nightly_commit": page.commit, "workloads": [row.workload for row in op.rows], "measured": op.measured}
     return plan, {"TITLE": f"bring {op.name} to its fastest comparator", "REQUIREMENT": requirement,
                   "LINK": "The PR links no issue."}
 
@@ -248,7 +248,8 @@ def _issue_work(config: Config, number: int) -> tuple[dict[str, Any], dict[str, 
         requirement += (" The op is the one the issue names, and its rows are the workloads the issue lists; "
                         "copy their benchmark names into `workloads` in `provenance.json`.")
     # A perf PR only refers to its issue: the nightly confirms the result, then the issue closes.
-    link = f"End Summary with the line `{'Refs' if kind == 'perf' else 'Closes'} #{number}`."
+    link = (f"End Summary, above the `Op:` lines, with the line `Refs #{number}`." if kind == "perf"
+            else f"End Summary with the line `Closes #{number}`.")
     plan = {"kind": kind, "issue": number, "issue_url": issue["url"]}
     return plan, {"TITLE": issue["title"], "REQUIREMENT": requirement, "LINK": link}
 
@@ -316,12 +317,22 @@ def start(config: Config, name: str | None = None, *, issue: int | None = None, 
         source, foundry_git = foundry.source(config, slug, prepared.commit)
         ledger.append("foundry", round=slug, foundry_source=str(source), tilefoundry_base=prepared.commit)
 
+        if issue is None:
+            sh.note("collecting earlier attempts")
+            prior = history.collect(config, op.name, op.benchmark, work["workloads"], exclude=slug)
+            values["PRIOR_ATTEMPTS"] = history.render(prior)
+        else:
+            prior = None
+            values["PRIOR_ATTEMPTS"] = ("This round works an issue, so topa collected no earlier attempts. "
+                                        "Search the upstream `[Perf]` PRs for the op yourself.")
         values |= {
             "SLUG": slug, "ROUND_DIR": round_dir, "UPSTREAM": config.upstream, "BRANCH": branch,
             "TILEOPS_BASE": tileops_base, "TILEOPS_WORKTREE": worktree, "TILEFOUNDRY_BASE": prepared.commit,
             "TILEFOUNDRY_SOURCE": source, "KNOWLEDGE": knowledge(), "TOPA": topa,
         }
         _write_round_dir(config, round_dir, plan["kind"], values, topa)
+        if prior is not None:
+            (round_dir / "prior-attempts.json").write_text(json.dumps(prior, indent=2) + "\n")
 
         sh.note("starting the container")
         started = container.start(config, slug=slug, worktree=worktree, round_dir=round_dir,
