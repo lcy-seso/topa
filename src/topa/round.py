@@ -382,7 +382,7 @@ def pull_request(config: Config, branch: str) -> dict[str, Any] | None:
     """The newest PR from *branch* of the fork; another fork can use the same branch name."""
     owner = (config.fork_owner or sh.gh_login()).lower()
     rows = sh.gh_json("pr", "list", "--repo", config.upstream, "--head", branch, "--state", "all",
-                      "--json", "number,state,url,mergeCommit,headRepositoryOwner")
+                      "--json", "number,state,url,mergeCommit,headRepositoryOwner,headRefOid")
     return next((row for row in rows or [] if row["headRepositoryOwner"]["login"].lower() == owner), None)
 
 
@@ -447,6 +447,27 @@ def foundry_patch(round_dir: Path, source: Path, base: str) -> bool:
     return False
 
 
+def drop_branch(config: Config, branch: str) -> str:
+    """Delete the round's local *branch* when its PR is merged with the branch's last commit.
+
+    `topa pr` pushes with `-u`, so `git branch -d` would take a branch that is only pushed
+    for merged. A squash merge leaves the commits out of main, so GitHub's PR state decides.
+    """
+    tip = sh.run(["git", "-C", config.tileops_repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+                 check=False)
+    if not tip:
+        return f"branch {branch} is already gone"
+    try:
+        pr = pull_request(config, branch)
+    except sh.CommandError:
+        pr = None
+    if not pr or pr["state"] != "MERGED" or pr.get("headRefOid") != tip:
+        return (f"kept branch {branch}: no merged PR holds its last commit "
+                f"(git -C {config.tileops_repo} branch -D {branch} drops it)")
+    sh.run(["git", "-C", config.tileops_repo, "branch", "-D", branch])
+    return f"deleted branch {branch}: PR #{pr['number']} is merged"
+
+
 def stop(config: Config, slug: str, *, remove: bool = False) -> list[str]:
     current = find(config, slug)
     meta = current.meta
@@ -498,12 +519,7 @@ def stop(config: Config, slug: str, *, remove: bool = False) -> list[str]:
         done.append(f"could not remove {worktree}; remove it by hand")
     elif worktree:
         done.append(f"removed {worktree}")
-        branch = meta.get("branch")
-        if branch and sh.ok(["git", "-C", config.tileops_repo, "rev-parse", "--verify", f"refs/heads/{branch}"]):
-            if sh.ok(["git", "-C", config.tileops_repo, "branch", "-d", branch]):
-                done.append(f"deleted branch {branch}")
-            else:
-                done.append(f"kept branch {branch}: it is not merged "
-                            f"(git -C {config.tileops_repo} branch -D {branch} drops it)")
+        if meta.get("branch"):
+            done.append(drop_branch(config, meta["branch"]))
     ledger.append("remove", round=slug)
     return done

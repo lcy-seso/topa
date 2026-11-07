@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import sys
 from pathlib import Path
@@ -57,6 +58,11 @@ def _commands(command: str) -> list[list[str]]:
     return [words for words in commands if words]
 
 
+# Command and process substitution. Finding where one ends needs a shell parser
+# (quotes, comments and heredocs can hold a `)`), so a line with one goes to the container.
+SUBSTITUTION = re.compile(r"[$<>]\(|`")
+
+
 def runs_on_the_host(command: str) -> bool:
     """Whether every program *command* invokes is a host-side one.
 
@@ -64,8 +70,13 @@ def runs_on_the_host(command: str) -> bool:
     second, so the whole line belongs in the container: one stray segment is
     enough to move it. A program is named by its basename, so the absolute
     `/.../.venv/bin/topa` the brief writes counts as `topa`. An operator inside
-    quotes, as in `grep "a\\|b"`, does not split the line.
+    quotes, as in `grep "a\\|b"`, does not split the line. A command or process
+    substitution runs a program too, quoted or not, so a line with `$(...)`, `<(...)`,
+    `>(...)` or backticks runs in the container.
     """
+    # A line continuation can split `$(`; `\\` before a newline is not one, so test both texts.
+    if SUBSTITUTION.search(command) or SUBSTITUTION.search(command.replace("\\\n", "")):
+        return False
     try:
         commands = _commands(command)
     except ValueError:  # unbalanced quotes: let the container decide

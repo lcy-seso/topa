@@ -11,7 +11,7 @@ from unittest import mock
 from topa import config, gate, ledger, review, wiki
 from topa.hook import decide
 from topa.container import foreign_files
-from topa.round import CLEAR_CLAUDE_ENV, _issue_work, brief, kit, render, round_slug, start
+from topa.round import CLEAR_CLAUDE_ENV, _issue_work, brief, drop_branch, kit, render, round_slug, start
 
 HIR = 'class Operator:\n    def kernel(self, x):\n        return tf.schedule((x,), op=T.cuda.sm90.Wgmma(n=16))\n'
 PAGE = Path(__file__).parent / "fixtures" / "Perf-Tracker-2026-11-06.md"
@@ -260,6 +260,13 @@ class HookTests(unittest.TestCase):
                 "ls\npython run.py",
                 "git status; nvidia-smi &",
                 "echo 'unbalanced",
+                'echo "$(python work/probe.py)"',
+                "echo `python work/probe.py`",
+                'echo "$(ls $(python x.py))"',
+                "cat <(python x.py)",
+                "echo $\\\n(python work/probe.py)",
+                "echo \\\\\npython work/probe.py",
+                'echo "$(echo ok # )\npython work/probe.py\n)"',
             ):
                 routed = decide(event(command), round_dir)
                 assert routed is not None, command
@@ -352,6 +359,21 @@ class RoundTests(unittest.TestCase):
             text = brief("perf", values | _issue_work(defaults(), 2791)[1])
             self.assertIn("`Refs #2791`", text)
             self.assertIn("copy their benchmark names into `workloads`", text)
+
+    def test_branch_is_dropped_only_when_its_pr_merged_its_tip(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            repo = Path(folder)
+            subprocess.run(["git", "init", "-q", "-b", "main", folder], check=True)
+            git(repo, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "a")
+            git(repo, "branch", "perf/x/x-r1")
+            tip = git(repo, "rev-parse", "HEAD")
+            for pr, kept in ((None, True), ({"number": 1, "state": "OPEN", "headRefOid": tip}, True),
+                             ({"number": 1, "state": "CLOSED", "headRefOid": tip}, True),
+                             ({"number": 1, "state": "MERGED", "headRefOid": "0" * 40}, True),
+                             ({"number": 1, "state": "MERGED", "headRefOid": tip}, False)):
+                with self.subTest(pr), mock.patch("topa.round.pull_request", return_value=pr):
+                    drop_branch(defaults(tileops_repo=repo), "perf/x/x-r1")
+                    self.assertEqual(bool(git(repo, "branch", "--list", "perf/x/x-r1")), kept)
 
     def test_ledger_fold(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
