@@ -20,8 +20,11 @@ Edit `~/.topa/config.toml`: the paths of the TileOPs and TileFoundry checkouts, 
 prints the settings in effect. `TOPA_<NAME>` in the environment overrides one setting for
 one command.
 
-It needs `claude`, `docker` with the NVIDIA runtime, `gh` (logged in), `git`, `herdr`,
-`ssh`, `nvidia-smi` and `uv`. The TileOPs checkout needs a remote for `tile-ai/TileOPs` and
-one for your fork. A herdr server must be running when a round starts.
+It needs x86_64 Linux, an NVIDIA driver that supports CUDA 13.2, `claude`, `docker` with
+the NVIDIA runtime, `gh`, `git`, the herdr TUI, `ssh`, `nvidia-smi` and `uv`. `gh` must keep
+its token in `~/.config/gh/hosts.yml` (`gh auth login --insecure-storage`) and `git` must
+push with it (`gh auth setup-git`). The TileOPs checkout needs a remote for
+`tile-ai/TileOPs` and one for your fork. A herdr server must be running when a round
+starts.
 
 [Getting started](usage.md) walks through each of these with the command that checks it.
