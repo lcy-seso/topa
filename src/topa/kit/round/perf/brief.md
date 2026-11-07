@@ -5,10 +5,11 @@ Optimize the op with [TileFoundry](https://github.com/tile-ai/TileFoundry) towar
 | Result | When | Do |
 | --- | --- | --- |
 | `bar met` | Every row of the op, behind or not, beats its fastest comparable comparator in the median and in every repeat, or ties it within one timer step or at the DRAM floor. | Open the PR. |
-| `below bar` | The bar is not met, and the candidate beats main on a row of the op. | Open the PR; list the unmet rows in Result And Limitations. |
+| `below bar` | The bar is not met, and the candidate beats main on a row of the op: candidate / main below 0.99. | Open the PR; list the unmet rows in Result And Limitations. |
 | none | Neither, or a person must decide. | Follow [Ending without a PR](#ending-without-a-pr). |
 
-- Both `bar met` and `below bar` also require that no row of any op is slower than main.
+- Both `bar met` and `below bar` also require that no row of any op is slower than main:
+  main / candidate below 0.99, the nightly's threshold for a row behind.
 - "Any op" includes every op that shares a kernel the round changes.
 - `topa gate` checks this rule on the Performance medians; the review checks the repeats.
 
@@ -125,13 +126,13 @@ each record that does not apply, with the reason.
 | (2) Directions exhausted | Each direction on the recorded list for each bottleneck was measured or shown infeasible. |
 | (3) TileFoundry consulted | Alternative placements were compared, the tutorial and spec pages on each bottleneck were read, and each direction they gave is on the list. |
 
-### 5-7. Review, cleanup and PR
+### 5-7. Cleanup, review and PR
 
-Follow [Review](#review), [Cleanup](#cleanup) and [PR](#pr), with these additions:
+Follow [Cleanup](#cleanup), [Review](#review) and [PR](#pr), with these additions:
 
 - Give Codex the rows, the Performance table with its raw timings, the timer resolution and
   the floors, and ask for the comparator classes, claimed ties and regressions against main.
-- Leave cleanup only when the result of the bar is unchanged.
+- Keep a cleanup change only when the result of the bar is unchanged.
 - Re-read the final HIR with the evidence before `topa pr --reviewed`.
 
 ## Verification

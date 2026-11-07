@@ -108,6 +108,23 @@ class GateTests(unittest.TestCase):
     def test_complete_round_passes(self) -> None:
         self.assertEqual(self.validate()["result"], "bar met")
 
+    def test_main_and_the_candidate_differ_only_beyond_the_noise(self) -> None:
+        """main / candidate below 0.99 is slower; candidate / main below 0.99 beats main."""
+        table = (self.round / "pr-comments.md").read_text()
+        row = "| 1 | 1 | 1 | 1 | 1 | 1 | 1 |"
+        for result, main, error in (("bar met", "0.99", None), ("bar met", "0.989", "is slower than main"),
+                                    ("below bar", "1.005", "must beat main"), ("below bar", "1.011", None)):
+            self.provenance["result"] = result
+            self.write_provenance()
+            text = table.replace(row, f"| 1 | {main} | 1 | 1 | 1 | 1 | 1 |")
+            (self.round / "pr-comments.md").write_text(text.replace("**bar met**", f"**{result}**"))
+            self.edit("pr-template.md", lambda t: re.sub(r"Result: .*", f"Result: {result}", t))
+            if error is None:
+                self.assertEqual(self.validate()["result"], result)
+            else:
+                with self.assertRaisesRegex(gate.GateError, error):
+                    self.validate()
+
     def test_trailers_name_the_round_op(self) -> None:
         kwargs = {"workloads": self.workloads, "measured": self.measured, "benchmark": "benchmarks.ops.bench_a"}
         self.assertEqual(gate.validate_round(self.round, self.repo, op="AFwdOp", **kwargs)["result"], "bar met")

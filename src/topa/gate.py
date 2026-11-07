@@ -33,6 +33,8 @@ COMMENT_SECTIONS = {
 GENERAL_TITLE = re.compile(r"\[(Bench|BugFix|Chore|CI|Design|Doc|Enhancement|Feat|Fix|Maintain|Perf|Refactor|"
                            r"Style|Test)\](\[[A-Za-z0-9_-]+\])? [A-Z`].+")
 RESULTS = ("bar met", "below bar")
+# A time ratio at or above this is noise: the nightly's threshold for a row behind.
+NOISE = 0.99
 # The last lines of a perf PR body, which `topa.history` reads to find earlier attempts at an op.
 TRAILER = re.compile(r"^(Op|Benchmark|Result): *(\S.*?) *$", re.MULTILINE)
 # How far a stated ratio may sit from the one its rounded times give.
@@ -174,7 +176,7 @@ def _time(value: object) -> float | None:
 
 
 def _not_slower(table: list[list[str]], label: str) -> set[str]:
-    """The rows of *table* faster than main; a row slower than main, or without times, fails."""
+    """The rows of *table* faster than main beyond `NOISE`; a row slower beyond it, or without times, fails."""
     main, candidate = table[0].index("main (us)"), table[0].index("candidate (us)")
     faster = set()
     for row in table[1:]:
@@ -182,9 +184,10 @@ def _not_slower(table: list[list[str]], label: str) -> set[str]:
         times = [_time(row[i]) if i < len(row) else None for i in (main, candidate)]
         if None in times:
             raise GateError(f"Performance: row {name!r} needs positive times for main and candidate")
-        if times[1] > times[0]:
-            raise GateError(f"Performance: row {name!r} is slower than main")
-        if times[1] < times[0]:
+        if times[0] / times[1] < NOISE:
+            raise GateError(f"Performance: row {name!r} is slower than main: "
+                            f"main / candidate {times[0] / times[1]:.4f}")
+        if times[1] / times[0] < NOISE:
             faster.add(name)
     return faster
 
@@ -193,8 +196,8 @@ def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, 
     """The environment, the method, one row per workload of the op, and no row slower than main.
 
     The op's own table holds the bar: under `bar met` each row beats its comparator or ties
-    it, or the DRAM floor, within one timer step; under `below bar` some row beats main. Other
-    ops that share a changed kernel only must not be slower than main.
+    it, or the DRAM floor, within one timer step; under `below bar` some row beats main beyond
+    `NOISE`. Other ops that share a changed kernel only must not be slower than main.
     """
     lines = text.splitlines()
     values = {row[0]: row[1].strip("`") for row in _table(lines, "| Environment |")[1:] if len(row) >= 2}
@@ -248,7 +251,7 @@ def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, 
                 raise GateError(f"Performance: row {name!r} is more than one timer step behind its "
                                 "comparator and the floor, so the bar is not met")
     if result == "below bar" and not faster & seen:
-        raise GateError("Performance: a below bar result must beat main on a row")
+        raise GateError(f"Performance: a below bar result must beat main on a row by candidate / main below {NOISE}")
 
 
 def _validate_pr(round_dir: Path, kind: str, issue: int | None) -> None:
