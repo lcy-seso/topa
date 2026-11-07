@@ -141,10 +141,11 @@ class GateTests(unittest.TestCase):
             "Summary section alone": body + "\n## Regression\n\n- 1\n",
             "title does not follow \\[Type\\]": body.replace("[BugFix][Norm]", "[Bug]"),
             "placeholder": None,
+            "sections Test Plan are empty": "## Test Plan\n",
         }.items():
             with self.subTest(message):
-                if text is None:
-                    (self.round / "pr-comments.md").write_text((kit() / "general" / "pr-comments.md").read_text())
+                if text is None or text.startswith("## Test Plan"):
+                    (self.round / "pr-comments.md").write_text(text or (kit() / "general" / "pr-comments.md").read_text())
                     text = body
                 (self.round / "pr-template.md").write_text(text)
                 with self.assertRaisesRegex(gate.GateError, message):

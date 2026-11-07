@@ -138,6 +138,9 @@ def read_comments(round_dir: Path, kind: str) -> list[tuple[str, str]]:
     found = sections(_required_file(round_dir, COMMENTS_FILE).read_text(encoding="utf-8"))
     if tuple(name for name, _ in found) != COMMENT_SECTIONS[kind]:
         raise GateError(f"{COMMENTS_FILE} must have exactly the sections {', '.join(COMMENT_SECTIONS[kind])}, in order")
+    empty = [name for name, text in found if not text.partition("\n")[2].strip()]
+    if empty:
+        raise GateError(f"{COMMENTS_FILE} sections {', '.join(empty)} are empty")
     return [(name, text.strip() + "\n") for name, text in found]
 
 
