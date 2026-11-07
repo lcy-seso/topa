@@ -39,11 +39,12 @@ def _hunt(args: argparse.Namespace) -> int:
 def _round_start(args: argparse.Namespace) -> int:
     from topa.round import start
 
-    meta = start(config_module.load(), args.op, dry_run=args.dry_run, force=args.force)
+    meta = start(config_module.load(), args.op, issue=args.issue, dry_run=args.dry_run, force=args.force)
     if args.dry_run:
         _print_json(meta)
         return 0
-    print(f"round   {meta['round']}  {meta['op']}  {meta['branch']}  gpu {meta['gpu']}")
+    work = meta.get("op") or f"#{meta['issue']} ({meta['kind']})"
+    print(f"round   {meta['round']}  {work}  {meta['branch']}  gpu {meta['gpu']}")
     print(f"dir     {meta['round_dir']}")
     print(f"pane    {meta['pane']}")
     print(f"watch   herdr agent read {meta['pane']}")
@@ -160,8 +161,9 @@ def parser() -> argparse.ArgumentParser:
 
     rounds = sub.add_parser("round", help="start, steer, inspect and stop rounds").add_subparsers(
         dest="round_command", required=True)
-    p = rounds.add_parser("start", help="start a round on an op of the wiki queue")
-    p.add_argument("op")
+    p = rounds.add_parser("start", help="start a round on an op of the wiki queue, or on a TileOPs issue")
+    p.add_argument("op", nargs="?")
+    p.add_argument("--issue", type=int, help="work this TileOPs issue instead of an op")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--force", action="store_true", help="start beyond max_rounds")
     p.set_defaults(func=_round_start)

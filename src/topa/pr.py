@@ -2,8 +2,8 @@
 
 The PR comes from the fork: the branch is pushed to the remote of `fork_owner`
 (the gh login by default), and the PR's head is `<fork_owner>:<branch>`. Its body
-is `pr-template.md`; each section of `pr-comments.md` is one comment, linked from
-the end of the body.
+is `pr-template.md`, which becomes the squash commit's message; each section of
+`pr-comments.md` is one comment.
 """
 
 from __future__ import annotations
@@ -17,31 +17,33 @@ from topa.config import Config
 from topa.gate import GateError, read_comments, read_pr, validate_round
 from topa.round import Round, find, pull_request
 
-CHECKLIST = """
-Artifact checks passed. Re-open the actual files before creating the PR:
-
+CHECKLIST = {
+    "perf": """
 1. Was final_hir.py analyzed, finalized with schedule finalize, and the kernel written from its TIR?
 2. Do the raw analyze reports justify the chosen placement over the rejected ones?
 3. Was every row of the op measured alternating main, candidate and comparators, and every row of
    another op sharing a changed kernel alternating main and candidate?
-4. Does every claim in pr-template.md and pr-comments.md match the evidence?
-
-If any answer is no or uncertain, continue the round instead of opening a PR.
-"""
+4. Does every claim in pr-template.md and pr-comments.md match the evidence?""",
+    "general": """
+1. Does the diff do everything the issue asks, and nothing it does not?
+2. Does each new test fail on the base and pass on the candidate?
+3. Does every claim in pr-template.md and pr-comments.md match the evidence?""",
+}
 
 
 def gate(config: Config, slug: str | None = None) -> Round:
     current = find(config, slug)
+    meta = current.meta
     try:
-        validate_round(current.dir, Path(current.meta["worktree"]), "HEAD",
-                       tuple(current.meta.get("workloads", ())), current.meta.get("measured", 0))
+        validate_round(current.dir, Path(meta["worktree"]), "HEAD", tuple(meta.get("workloads", ())),
+                       meta.get("measured", 0), meta.get("kind", "perf"), meta.get("issue"))
     except GateError as error:
-        raise SystemExit(f"TileFoundry artifact gate: FAIL: {error}") from error
-    print("TileFoundry artifact gate: PASS")
+        raise SystemExit(f"topa gate: FAIL: {error}") from error
+    print("topa gate: PASS")
     return current
 
 
-def _post_comments(config: Config, number: int, comments: list[tuple[str, str]], folder: str) -> list[str]:
+def _post_comments(config: Config, number: int, comments: list[tuple[str, str]], folder: str) -> None:
     """Create or update one comment per section; ours is the one we wrote that opens with its heading."""
     me = sh.gh_login()
     out = sh.run(["gh", "api", "--paginate", f"repos/{config.upstream}/issues/{number}/comments",
@@ -51,21 +53,20 @@ def _post_comments(config: Config, number: int, comments: list[tuple[str, str]],
         comment = json.loads(line)
         if comment["login"] == me:
             existing.setdefault(comment["body"].split("\n", 1)[0].strip(), comment["id"])
-    urls = []
     for name, text in comments:
         path = Path(folder, "comment.md")
         path.write_text(text, encoding="utf-8")
         found = existing.get(f"## {name}")
         endpoint = (f"repos/{config.upstream}/issues/comments/{found}" if found
                     else f"repos/{config.upstream}/issues/{number}/comments")
-        urls.append(sh.run(["gh", "api", "-X", "PATCH" if found else "POST", endpoint,
-                            "-F", f"body=@{path}", "--jq", ".html_url"]))
-    return urls
+        sh.run(["gh", "api", "-X", "PATCH" if found else "POST", endpoint, "-F", f"body=@{path}"])
 
 
 def open_pr(config: Config, slug: str | None = None, *, reviewed: bool = False, watch: bool = True) -> str:
     current = gate(config, slug)
-    sh.note(CHECKLIST)
+    kind = current.meta.get("kind", "perf")
+    sh.note("Artifact checks passed. Re-open the actual files before creating the PR:\n" + CHECKLIST[kind]
+            + "\n\nIf any answer is no or uncertain, continue the round instead of opening a PR.")
     if not reviewed:
         sh.note("PR not opened. Inspect those files, then rerun: topa pr --reviewed")
         raise SystemExit(2)
@@ -78,7 +79,7 @@ def open_pr(config: Config, slug: str | None = None, *, reviewed: bool = False, 
     repo_name = config.upstream.split("/", 1)[1]
     fork = sh.github_remote(worktree, f"{owner}/{repo_name}")
     title, text = read_pr(current.dir)
-    comments = read_comments(current.dir)
+    comments = read_comments(current.dir, kind)
     repo = ["--repo", config.upstream]
 
     sh.run(["git", "-C", worktree, "push", "--force-with-lease", "-u", fork, branch], capture=False)
@@ -97,10 +98,9 @@ def open_pr(config: Config, slug: str | None = None, *, reviewed: bool = False, 
             number = int(url.rstrip("/").rsplit("/", 1)[1])
         # Recorded before the comments, so a PR whose comments fail is still the round's.
         ledger.append("pr", round=current.slug, pr=url)
-        urls = _post_comments(config, number, comments, folder)
-        links = " · ".join(f"[{name}]({url})" for (name, _), url in zip(comments, urls))
-        body.write_text(f"{text}\n{links}\n", encoding="utf-8")
-        sh.run(["gh", "pr", "edit", str(number), *repo, "--title", title, "--body-file", body])
+        _post_comments(config, number, comments, folder)
+        if existing:
+            sh.run(["gh", "pr", "edit", str(number), *repo, "--title", title, "--body-file", body])
     print(url)
     if watch:
         sh.run(["gh", "pr", "checks", url, *repo, "--watch", "--interval", "300"], check=False, capture=False)

@@ -1,6 +1,6 @@
 ---
 name: topa-round
-description: Operate running TileFoundry rounds — check status, message an agent, read its progress, review its PR, stop or clean up a round. Use when the user asks about a round, its agent, its PR, or wants to stop or remove one.
+description: Operate running topa rounds — check status, message an agent, read its progress, review its PR, stop or clean up a round. Use when the user asks about a round, its agent, its PR, or wants to stop or remove one.
 ---
 
 # topa round
@@ -17,7 +17,7 @@ Run `topa` from `PATH`. State lives in `~/.topa/`:
 | one round's history | `topa round log <slug>` |
 | what the agent is doing | `herdr agent read <pane>` (pane from status) |
 | to tell the agent something | `topa round say <slug> "<text>"` |
-| a new round | `topa round start <Op>` (`--dry-run` first if unsure) |
+| a new round | `topa round start <Op>` or `topa round start --issue <N>` (`--dry-run` first if unsure) |
 | to stop the agent, keep everything | `topa round stop <slug>` |
 | to release everything | `topa round stop <slug> --rm` |
 | to run a command against a TileOPs branch outside a round | `cd <worktree> && topa run <cmd>` |
@@ -26,7 +26,7 @@ Run `topa` from `PATH`. State lives in `~/.topa/`:
 
 - A message to an agent is one instruction in plain text, at most 4000 characters.
   Put long material in a file in the round directory and name the file.
-- Change the brief template (`~/topa/src/topa/kit/round/brief.md`) for future rounds,
+- Change the brief templates (`~/topa/src/topa/kit/round/`) for future rounds,
   never a running round's `brief.md`. To reach a running round, use `say`.
 - `stop` without `--rm` stops the agent and the container (the GPU is free) and archives
   the Claude transcripts into `rounds/<slug>/session/`. The worktree, the branch and the
@@ -41,7 +41,8 @@ Run `topa` from `PATH`. State lives in `~/.topa/`:
 
 ## Reviewing a round's PR
 
-Read `rounds/<slug>/report.md`, `provenance.json`, the PR and its four comments.
-`topa gate --round <slug>` rechecks the evidence. Report the result (`bar met` or
-`below bar`), the rows still behind their fastest comparator, any row slower than main,
-and any TileFoundry issue the round filed.
+Read `rounds/<slug>/report.md`, `provenance.json`, the PR and its comments.
+`topa gate --round <slug>` rechecks the evidence. For a perf round, report the result
+(`bar met` or `below bar`), the rows still behind their fastest comparator and any row
+slower than main. For any round, report whether the PR resolves its issue and any
+TileFoundry issue the round filed.

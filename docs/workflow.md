@@ -17,7 +17,7 @@ its fastest comparator:
    TileFoundry; implement in rounds whose schedule TileFoundry derives, measuring main
    and the candidate alternately; have Codex review the diff; clean up and verify
    again; open the PR with `topa pr`. That command checks the evidence, opens the PR from
-   your fork, and posts the evidence as four comments. TileFoundry problems the agent hits
+   your fork, and posts the test plan and the evidence as five comments. TileFoundry problems the agent hits
    go into one TileFoundry issue.
 5. A round that misses the bar on some rows still opens its PR when it beats main and
    slows no row; the unmet rows go under Result And Limitations. Otherwise it opens no PR
@@ -36,3 +36,17 @@ flowchart LR
 ```
 
 A merged PR moves the nightly. A TileFoundry fix reaches the next round.
+
+## Issue rounds
+
+`topa round start --issue <N>` works TileOPs issue N instead of a queue op. The issue body
+is the requirement, and the start assigns the issue to you.
+
+| Issue title | Contract | PR links the issue with |
+| --- | --- | --- |
+| starts with `[Perf]` | the seven stages and the bar above, on the workloads the issue lists | `Refs #N`; the nightly confirms the result |
+| anything else | understand, write a failing test, implement, verify, review, clean up, PR | `Closes #N` |
+
+`topa gate` runs the shared checks on every round: the commit binding, the recorded tests
+and reviews, and the PR text. Only a perf round has the forbidden paths, the Performance
+table, the TileFoundry records and `findings.json` checked.

@@ -11,7 +11,7 @@ from unittest import mock
 from topa import config, gate, ledger, review, wiki
 from topa.hook import decide
 from topa.container import foreign_files
-from topa.round import CLEAR_CLAUDE_ENV, kit, render, round_slug, start
+from topa.round import CLEAR_CLAUDE_ENV, _issue_work, brief, kit, render, round_slug, start
 
 HIR = 'class Operator:\n    def kernel(self, x):\n        return tf.schedule((x,), op=T.cuda.sm90.Wgmma(n=16))\n'
 PAGE = Path(__file__).parent / "fixtures" / "Perf-Tracker-2026-11-06.md"
@@ -27,10 +27,11 @@ def page(text: str | None = None) -> wiki.Page:
     return wiki.parse(PAGE.read_text() if text is None else text, "2026-11-06", PAGE_URL)
 
 
-def filled(name: str, result: str = "bar met") -> str:
+def filled(name: str, result: str = "bar met", kind: str = "perf") -> str:
     """A kit PR file with every placeholder filled, as a round fills it."""
-    text = (kit() / name).read_text()
-    text = re.sub(r"^# \[Perf\].*", "# [Perf][foundry][Test] Schedule the kernel", text)
+    text = (kit() / kind / name).read_text()
+    title = "[Perf][foundry][Test] Schedule the kernel" if kind == "perf" else "[BugFix][Norm] Keep the row mean"
+    text = re.sub(r"^# \[.*", f"# {title}", text)
     text = re.sub(r"<work/final_hir\.py[^\n]*>", HIR.rstrip("\n"), text)
     text = text.replace("sha256:<image digest>", "sha256:" + "a" * 64)
     text = text.replace("**<bar met | below bar>**", f"**{result}**")
@@ -120,12 +121,54 @@ class GateTests(unittest.TestCase):
                   .replace("| timer step (us) | 1 |", "| timer step (us) | 0.02 |"))
         self.assertEqual(self.validate()["result"], "bar met")
 
+    def test_general_round_skips_the_perf_checks(self) -> None:
+        """No perf record, no findings.json, and a change under a forbidden path."""
+        for name in ("work/final_hir.py", "findings.json"):
+            (self.round / name).unlink()
+        Path(self.repo, "benchmarks").mkdir()
+        Path(self.repo, "benchmarks/b.py").write_text("x\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "b")
+        self.provenance["candidate_commit"] = git(self.repo, "rev-parse", "HEAD")
+        body = filled("pr-template.md", kind="general") + "\nCloses #7\n"
+        (self.round / "pr-template.md").write_text(body)
+        (self.round / "pr-comments.md").write_text(filled("pr-comments.md", kind="general"))
+        self.provenance = {key: self.provenance[key] for key in ("tileops_base", "candidate_commit", "tests", "reviews")}
+        self.write_provenance()
+        gate.validate_round(self.round, self.repo, kind="general", issue=7)
+        for message, text in {
+            "line Closes #7": body.replace("Closes #7", "Refs #7"),
+            "Summary section alone": body + "\n## Regression\n\n- 1\n",
+            "title does not follow \\[Type\\]": body.replace("[BugFix][Norm]", "[Bug]"),
+            "placeholder": None,
+            "sections Test Plan are empty": "## Test Plan\n",
+        }.items():
+            with self.subTest(message):
+                if text is None or text.startswith("## Test Plan"):
+                    (self.round / "pr-comments.md").write_text(text or (kit() / "general" / "pr-comments.md").read_text())
+                    text = body
+                (self.round / "pr-template.md").write_text(text)
+                with self.assertRaisesRegex(gate.GateError, message):
+                    gate.validate_round(self.round, self.repo, kind="general", issue=7)
+
+    def test_perf_issue_round_takes_its_rows_from_provenance(self) -> None:
+        self.edit("pr-template.md", lambda t: t + "\nRefs #7\n")
+        self.provenance["workloads"] = ["1"]
+        self.write_provenance()
+        self.assertEqual(gate.validate_round(self.round, self.repo, issue=7)["result"], "bar met")
+        for message, workloads in {"floor lacks the rows behind w2": ["1", "w2"], "non-empty list": []}.items():
+            with self.subTest(message):
+                self.provenance["workloads"] = workloads
+                self.write_provenance()
+                with self.assertRaisesRegex(gate.GateError, message):
+                    gate.validate_round(self.round, self.repo, issue=7)
+
     def test_unfilled_template_fails(self) -> None:
         for name in ("pr-template.md", "pr-comments.md"):
             with self.subTest(name):
                 self.tearDown()
                 self.setUp()
-                (self.round / name).write_text((kit() / name).read_text())
+                (self.round / name).write_text((kit() / "perf" / name).read_text())
                 with self.assertRaisesRegex(gate.GateError, "placeholder"):
                     self.validate()
 
@@ -144,10 +187,10 @@ class GateTests(unittest.TestCase):
                 '{"findings": [], "issue": "https://github.com/tile-ai/TileFoundry/issues/1"}'),
             "exact final HIR": lambda: (self.round / "work/final_hir.py").write_text(HIR + "# changed\n"),
             "title as a `# ` line": lambda: self.edit("pr-template.md", lambda t: t.split("\n", 1)[1]),
-            "placeholder ```text": lambda: self.edit("pr-template.md",
+            "placeholder ```text": lambda: self.edit("pr-comments.md",
                                                      lambda t: t.replace("```text\n1\n```", "```text\n<x>\n```")),
             "placeholder <x>": lambda: self.edit("pr-template.md", lambda t: t.replace("## Summary\n\n- 1", "## Summary\n\n- <x>")),
-            "Summary, Test plan": lambda: self.edit("pr-template.md", lambda t: t.replace("## Test plan\n", "")),
+            "Summary section alone": lambda: self.edit("pr-template.md", lambda t: t + "\n## Benchmark\n\n- 1\n"),
             "TileFoundry Findings, in order": lambda: self.edit(
                 "pr-comments.md", lambda t: t.replace("## TileFoundry Findings", "## Findings")),
             "full sha256": lambda: self.edit("pr-comments.md", lambda t: t.replace("a" * 64, "a" * 12)),
@@ -273,11 +316,42 @@ class RoundTests(unittest.TestCase):
                 start(defaults(), "NoSuchFwdOp", page=page(), dry_run=True)
 
     def test_brief_renders_every_placeholder(self) -> None:
-        template = (kit() / "brief.md").read_text()
-        text = render(template, {name: name for name in re.findall(r"\{\{([A-Z_]+)\}\}", template)})
-        self.assertNotIn("{{", text)
+        for kind in ("perf", "general"):
+            template = (kit() / "brief.md").read_text() + (kit() / kind / "brief.md").read_text()
+            text = brief(kind, {name: name for name in re.findall(r"\{\{([A-Z_]+)\}\}", template)})
+            self.assertNotIn("{{", text)
+            self.assertEqual("### 1. Requirement and comparators" in text, kind == "perf")
         with self.assertRaises(SystemExit):
             render("{{A}} {{B}}", {"A": 1})
+
+    def test_issue_sets_the_kind_and_the_requirement(self) -> None:
+        issues = {
+            2812: {"number": 2812, "title": "[BUG][Norm] LayerNorm loses precision", "body": "## Repro\nx = 1e36",
+                   "labels": [{"name": "bug"}], "url": "https://github.com/tile-ai/TileOPs/issues/2812", "state": "OPEN"},
+            2791: {"number": 2791, "title": "[Perf][GEMM] Close the back-to-back gap", "body": "Rows: `m4096`",
+                   "labels": [], "url": "https://github.com/tile-ai/TileOPs/issues/2791", "state": "OPEN"},
+        }
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch("topa.ledger.LEDGER", Path(folder, "ledger.jsonl")), \
+                mock.patch("topa.sh.require"), mock.patch("topa.sh.github_remote"), \
+                mock.patch("topa.round.topa_binary"), \
+                mock.patch("topa.sh.gh_json", side_effect=lambda *args: issues[int(args[2])]):
+            general = start(defaults(), issue=2812, dry_run=True)
+            perf = start(defaults(), issue=2791, dry_run=True)
+            self.assertEqual((general["kind"], general["branch"]), ("general", "fix/issue/issue-2812-r1"))
+            self.assertEqual((perf["kind"], perf["branch"]), ("perf", "perf/issue/issue-2791-r1"))
+            ledger.append("create", **general)
+            with self.assertRaisesRegex(SystemExit, "already works issue #2812"):
+                start(defaults(), issue=2812, dry_run=True)
+            values = {name: name for name in ("SLUG", "ROUND_DIR", "UPSTREAM", "BRANCH", "TILEOPS_BASE",
+                                               "TILEOPS_WORKTREE", "TILEFOUNDRY_BASE", "TILEFOUNDRY_SOURCE",
+                                               "KNOWLEDGE", "TOPA")}
+            text = brief("general", values | _issue_work(defaults(), 2812)[1])
+            self.assertIn("> ## Repro\n> x = 1e36", text)
+            self.assertIn("`Closes #2812`", text)
+            text = brief("perf", values | _issue_work(defaults(), 2791)[1])
+            self.assertIn("`Refs #2791`", text)
+            self.assertIn("copy their benchmark names into `workloads`", text)
 
     def test_ledger_fold(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
