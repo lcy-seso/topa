@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -8,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from topa import config, gate, history, ledger, review, wiki
+from topa import config, gate, history, ledger, review, setup_cmd, wiki
 from topa.container import foreign_files
 from topa.hook import decide
 from topa.round import CLEAR_CLAUDE_ENV, _issue_work, brief, drop_branch, kit, render, round_slug, start
@@ -20,7 +21,7 @@ PAGE_URL = "https://github.com/tile-ai/TileOPs/wiki/Perf-Tracker-2026-11-06"
 
 def defaults(**changes) -> config.Config:
     values = {name: config._coerce(name, value) for name, value in config.DEFAULTS.items()}
-    return config.Config(**{**values, **changes})
+    return config.Config(**{**values, "reviewer": "review-agent", **changes})
 
 
 def page(text: str | None = None) -> wiki.Page:
@@ -42,6 +43,24 @@ def filled(name: str, result: str = "bar met", kind: str = "perf") -> str:
 
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
+
+
+class ConfigTests(unittest.TestCase):
+    def test_every_setting_is_documented(self) -> None:
+        usage = (Path(__file__).parents[1] / "docs" / "usage.md").read_text()
+        rows = re.findall(r"^\| (`[^|]+`) \|", usage, re.MULTILINE)
+        documented = {name for row in rows for name in re.findall(r"`([a-z_]+)`", row)}
+        self.assertEqual(sorted(set(config.DEFAULTS) ^ documented), [])
+
+    def test_first_run_writes_a_config_that_loads_then_asks_for_the_reviewer(self) -> None:
+        env = {name: value for name, value in os.environ.items() if not name.startswith("TOPA_")}
+        with tempfile.TemporaryDirectory() as folder, mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.object(config, "HOME", Path(folder)), \
+                mock.patch.object(config, "CONFIG", Path(folder, "config.toml")):
+            with self.assertRaisesRegex(SystemExit, "set reviewer"):
+                setup_cmd.setup(config.load())
+            self.assertTrue(config.CONFIG.is_file())
+            self.assertEqual(config.load(), defaults(reviewer=None))
 
 
 class GateTests(unittest.TestCase):
@@ -272,6 +291,15 @@ class GateTests(unittest.TestCase):
 
 
 class HookTests(unittest.TestCase):
+    def test_configured_reviewer_runs_on_the_host(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            round_dir = Path(folder)
+            (round_dir / "round.json").write_text('{"alias": "topa-x-r1", "reviewer": "review-agent"}')
+            event = lambda command: {"tool_input": {"command": command}, "cwd": folder}
+            review = '"review" < /dev/null > evidence/review-1.md 2>&1'
+            self.assertIsNone(decide(event(f"cd /wt && /opt/bin/review-agent --read-only {review}"), round_dir))
+            self.assertIsNotNone(decide(event(f"other-agent {review}"), round_dir))
+
     def test_routing(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             round_dir = Path(folder)
@@ -283,7 +311,6 @@ class HookTests(unittest.TestCase):
                 'gh issue view 1 2>&1 | head -300; echo "rc=$?"',
                 'cd /x && grep -n "hir\\|iteration" gate.py | head -60',
                 "git log --oneline\ncat notes.md > /dev/null 2>&1",
-                'codex exec --sandbox read-only "review" < /dev/null > evidence/review-1.md 2>&1',
             ):
                 self.assertIsNone(decide(event(command), round_dir), command)
             for command in (
@@ -384,7 +411,7 @@ class RoundTests(unittest.TestCase):
                 start(defaults(), issue=2812, dry_run=True)
             values = {name: name for name in ("SLUG", "ROUND_DIR", "UPSTREAM", "BRANCH", "TILEOPS_BASE",
                                                "TILEOPS_WORKTREE", "TILEFOUNDRY_BASE", "TILEFOUNDRY_SOURCE",
-                                               "KNOWLEDGE", "TOPA", "PRIOR_ATTEMPTS")}
+                                               "KNOWLEDGE", "TOPA", "PRIOR_ATTEMPTS", "REVIEWER")}
             text = brief("general", values | _issue_work(defaults(), 2812)[1])
             self.assertIn("> ## Repro\n> x = 1e36", text)
             self.assertIn("`Closes #2812`", text)

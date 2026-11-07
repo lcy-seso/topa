@@ -7,6 +7,7 @@ overrides any one of them for a single command.
 from __future__ import annotations
 
 import os
+import shlex
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,15 +23,16 @@ DEFAULTS: dict[str, Any] = {
     "runner_image": "ghcr.io/tile-ai/tileops-dev:cuda13.2-torch2.13-tilelang0.1.12",
     "agent_image": "topa:agent",
     "gpu": None,
-    "gpu_exclude": [4, 5],
+    "gpu_exclude": [],
     "docker_host": None,
     "docker_bootstrap": None,
-    "proxy_host": "10.0.2.2",
-    "no_proxy": "localhost,127.0.0.1,pypi.org,files.pythonhosted.org,download.pytorch.org",
+    "proxy_host": None,
+    "no_proxy": None,
     "upstream": "tile-ai/TileOPs",
     "fork_owner": None,
-    "model": "claude-opus-5-5",
-    "effort": "high",
+    "model": None,
+    "effort": None,
+    "reviewer": None,
     "tilefoundry_commit": None,
     "max_rounds": 2,
 }
@@ -48,14 +50,21 @@ class Config:
     gpu_exclude: tuple[int, ...]
     docker_host: str | None
     docker_bootstrap: str | None
-    proxy_host: str
-    no_proxy: str
+    proxy_host: str | None
+    no_proxy: str | None
     upstream: str
     fork_owner: str | None
-    model: str
-    effort: str
+    model: str | None
+    effort: str | None
+    reviewer: str | None
     tilefoundry_commit: str | None
     max_rounds: int
+
+    @property
+    def reviewer_program(self) -> str:
+        if not self.reviewer:
+            raise SystemExit(f"set reviewer in {CONFIG}; see docs/usage.md")
+        return shlex.split(self.reviewer)[0]
 
     @property
     def rounds(self) -> Path:
