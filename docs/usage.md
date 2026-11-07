@@ -45,16 +45,7 @@ container, and keeps a record of what each agent did.
 | slug | The name of a round, such as `i2301-r1` (issue 2301, first round). `topa round start` prints it; `say`, `stop` and `log` take it. |
 | herdr | A terminal workspace manager for AI coding agents ([Herdr TUI](https://herdr.dev/tui)). Each agent runs in a herdr pane. |
 
-A round goes through these stages:
-
-1. `topa hunt` lists the ops that are behind.
-2. `topa issue new <Op>` files a GitHub issue for an op, or claims an existing one.
-3. `topa round start <issue>` prepares a branch, a container and a brief, then starts the
-   agent.
-4. The agent works on its own and opens a PR from your fork with `topa pr`.
-5. `topa round stop <slug> --rm` ends the round and frees its resources.
-
-[How a round works](workflow.md) describes what happens inside each stage.
+[How a round works](workflow.md) describes the stages of a round.
 
 ## What you need
 
@@ -176,15 +167,11 @@ their defaults unless the second table says otherwise.
 
 | Setting | Default | Change it when |
 | --- | --- | --- |
-| `gpu` | unset: topa picks the card with the least memory in use | every round must use one card |
 | `gpu_exclude` | `[4, 5]` | those cards are not reserved on your machine; `[]` uses every card |
-| `max_rounds` | `2` | you want more rounds running at the same time |
-| `runner_image` | the public TileOPs dev image | TileOPs publishes a new image tag |
 | `docker_host` | unset: the `DOCKER_HOST` of your shell | Docker must be reached at another address |
 | `docker_bootstrap` | unset | a script must start the Docker daemon before each round |
 | `proxy_host` | `10.0.2.2` | see below |
 | `model`, `effort` | `claude-opus-5-5`, `high` | you want the agent on another model or effort |
-| `tilefoundry_commit` | unset: the newest `main` | rounds must read one fixed TileFoundry commit |
 
 `proxy_host` matters only when `HTTP_PROXY` or `HTTPS_PROXY` points at `127.0.0.1` or
 `localhost`. topa replaces that address with `proxy_host` inside the container. `10.0.2.2`
@@ -203,38 +190,21 @@ topa setup
 Setup checks the tools and the two clones, pulls `runner_image` (8.8 GB on disk), builds
 the agent image `topa:agent` on it, and makes `~/.ssh/config` include the rounds' SSH
 entries. It also marks `~/.topa/rounds` as trusted in `~/.claude.json`, so Claude Code
-starts in a round directory without asking. A successful run ends like this:
-
-```text
-built topa:agent on ghcr.io/tile-ai/tileops-dev:cuda13.2-torch2.13-tilelang0.1.12
-added Include "/home/<you>/.topa/ssh-config/*" to /home/<you>/.ssh/config
-marked /home/<you>/.topa/rounds as trusted in ~/.claude.json
-```
+starts in a round directory without asking.
 
 Setup stops at the first missing piece; fix it and run setup again. Run setup again after
 you change `runner_image`, so `topa:agent` is rebuilt on the new image.
 
 ## Step 6: Start herdr
 
-topa runs each agent as an interactive Claude Code session in a herdr pane. herdr creates
-the round's worktree and pane, starts Claude Code in it, delivers the brief and your
-`topa round say` messages, and reports whether the agent is working or idle. You can read
-or attach to any pane while the agent runs.
-
-A herdr server must be running for all of this. Start herdr in a terminal you keep open,
-such as a tmux window:
+topa starts each agent in a herdr pane, so a herdr server must be running. Start it in a
+terminal you keep open; `herdr server` runs it without the herdr interface:
 
 ```bash
-herdr
+herdr server
 ```
 
-Check from another terminal:
-
-```bash
-herdr agent list
-```
-
-An error with `server_not_running` means herdr is not running.
+Check from another terminal that `herdr agent list` answers.
 
 ## Step 7: Pick an op and its issue
 
@@ -247,8 +217,7 @@ The first line names the nightly that was graded. The table lists every op that 
 | Column | Meaning |
 | --- | --- |
 | `op` | the op's name; pass it to `topa issue new` |
-| `rival` | the op's rival |
-| `ratio` | the op's ratio; below 0.95 is behind |
+| `rival`, `ratio` | see [What topa does](#what-topa-does) |
 | `behind` | how many of the op's workloads are behind, of those rated |
 | `issue` | the open TileOPs issue that names the op, if any |
 | `assignee` | who that issue is assigned to |
@@ -288,19 +257,8 @@ Then start it:
 topa round start <issue>
 ```
 
-The first round on an image also installs TileFoundry's extra dependencies into a cache;
-later rounds reuse it. When the command finishes it prints how to reach the round:
-
-```text
-round   i2301-r1  #2301  <branch>  gpu 2
-dir     /home/<you>/.topa/rounds/i2301-r1
-pane    <pane-id>
-watch   herdr agent read <pane-id>
-say     topa round say i2301-r1 "..."
-stop    topa round stop i2301-r1 [--rm]
-```
-
-Confirm that the agent started working:
+The first round on an image also caches TileFoundry's extra dependencies. The command
+prints the slug, the pane id and the commands to reach the round. Confirm that the agent started working:
 
 ```bash
 herdr agent read <pane-id>
@@ -309,8 +267,6 @@ herdr agent read <pane-id>
 The output shows the agent reading `brief.md`. If it shows the prompt still sitting in the
 input box, open the pane with `herdr agent attach <pane-id>` and press Enter. From then on
 the agent works without further input.
-
-At most `max_rounds` rounds run at the same time. `--force` starts one beyond the limit.
 
 ## Step 9: Watch and steer the agent
 
@@ -324,31 +280,10 @@ At most `max_rounds` rounds run at the same time. `--force` starts one beyond th
 
 The pane id is printed by `round start` and stored in `~/.topa/rounds/<slug>/round.json`.
 
-The round directory `~/.topa/rounds/<slug>/` holds the agent's work as it happens:
-
-| Path | Contents |
-| --- | --- |
-| `brief.md` | the agent's instructions for this round |
-| `environment.md` | the container, GPU, worktree and image of the round |
-| `work/` | the HIR candidates, the runtime twin and the scheduled TIR |
-| `evidence/` | raw correctness, benchmark and profile results |
-| `report.md` | the agent's report, written at the end |
-| `pr-template.md` | the PR title and body, filled in by the agent |
-
-The production code change is in the round's TileOPs worktree,
-`<worktree_root>/tileops-<slug>/`.
+The agent's evidence and report are in `~/.topa/rounds/<slug>/`, and its code change in
+`<worktree_root>/tileops-<slug>/`. [Layout](layout.md#on-the-machine) lists both.
 
 ## Step 10: Finish the round
-
-The agent opens the PR itself, in two calls:
-
-1. `topa pr` checks the evidence in the round directory, refuses when something is
-   missing, and otherwise stops and asks the agent to re-read its evidence.
-2. `topa pr --reviewed` checks again, pushes the branch to your fork and opens the PR on
-   `tile-ai/TileOPs`.
-
-If the agent hit TileFoundry problems, it also files one issue on `tile-ai/TileFoundry`
-and links it in `report.md`.
 
 A round ends in one of these ways. Each needs you to end it; a round keeps its GPU until
 you do.
@@ -366,18 +301,9 @@ worktree with any uncommitted change in it:
 git -C <worktree_root>/tileops-<slug> status --short
 ```
 
-The two forms of `stop`:
-
-| | `topa round stop <slug>` | `topa round stop <slug> --rm` |
-| --- | --- | --- |
-| agent and herdr pane | closed | closed |
-| container | stopped; its GPU is free | removed |
-| TileOPs worktree and branch | kept | removed; the branch only if merged |
-| TileFoundry checkout | kept | removed |
-| round directory, with transcripts copied to `session/` | kept | kept |
-
-topa has no command that resumes a stopped round. [Layout](layout.md#on-the-machine) lists
-everything each form keeps.
+`topa round stop <slug>` without `--rm` frees the GPU and keeps the worktree. topa has no
+command that resumes a stopped round. [Layout](layout.md#on-the-machine) lists what each
+form keeps.
 
 ## Run a command without an agent
 

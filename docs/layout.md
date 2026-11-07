@@ -37,7 +37,6 @@ What each step keeps:
 | | running | `stop` | `stop --rm` |
 | --- | --- | --- | --- |
 | `rounds/<slug>/`: brief, `work/`, `evidence/`, `report.md`, PR text | yes | yes, plus `session/` (transcripts) and `foundry.patch` if TileFoundry changed | yes |
-| ledger | yes | yes | yes |
 | TileOPs worktree and branch | yes | yes | removed; the branch only if merged |
 | TileFoundry checkout, SSH key and entry | yes | yes | removed |
 | container and its GPU | running | stopped; GPU free | removed |
