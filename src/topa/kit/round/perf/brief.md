@@ -19,6 +19,7 @@ Optimize the op with [TileFoundry](https://github.com/tile-ai/TileFoundry) towar
 - Derive each dispatch rule from hardware and call facts, sweep it over the workloads, and
   cover it with a test.
 - Do not change the benchmark, its timing, the comparators, the workloads or the public Op.
+- Add no op.
 - Do not change `benchmarks/`, `workloads/`, `src/tileops/manifest/`, `scripts/` or
   `.github/`; `topa gate` rejects such a diff.
 

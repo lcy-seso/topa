@@ -22,7 +22,7 @@ The code, the PR and any issue you open are public.
 
 - Do not loosen the repository's tolerances or checks, skip a case, or add test-only logic.
 - Do not branch on a shape.
-- Add no op and no compatibility shim.
+- Add no compatibility shim.
 - Migrate every caller of a changed interface in the same PR.
 - Fix shared code with one rule for every op, never a list of ops or shapes.
 - Fix a bug in main that the changed call paths hit in this PR, with a test. Report other
