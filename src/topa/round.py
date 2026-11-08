@@ -480,6 +480,22 @@ def drop_branch(config: Config, branch: str) -> str:
     return f"deleted branch {branch}: PR #{pr['number']} is merged"
 
 
+def _worktrees_under(config: Config, folder: Path) -> list[Path]:
+    listing = sh.run(["git", "-C", config.tileops_repo, "worktree", "list", "--porcelain"], check=False)
+    paths = [Path(line.removeprefix("worktree ")) for line in listing.splitlines() if line.startswith("worktree ")]
+    return [path for path in paths if path.resolve().is_relative_to(folder.resolve())]
+
+
+def remove_worktrees_under(config: Config, folder: Path) -> tuple[int, list[Path]]:
+    """Remove the TileOPs worktrees a round made inside its directory *folder*: how many went,
+    and the ones that stayed, such as a locked one."""
+    found = _worktrees_under(config, folder)
+    for path in found:
+        sh.run(["git", "-C", config.tileops_repo, "worktree", "remove", "--force", path], check=False)
+    left = _worktrees_under(config, folder)
+    return len(found) - len(left), left
+
+
 def stop(config: Config, slug: str, *, remove: bool = False) -> list[str]:
     current = find(config, slug)
     meta = current.meta
@@ -522,6 +538,10 @@ def stop(config: Config, slug: str, *, remove: bool = False) -> list[str]:
         foundry.remove_source(config, Path(meta["foundry_source"]))
         done.append("removed the TileFoundry checkout")
 
+    count, left = remove_worktrees_under(config, current.dir)
+    if count:
+        done.append(f"removed {count} worktree(s) the round made in {current.dir}")
+    done += [f"could not remove {path}; remove it by hand" for path in left]
     worktree = Path(meta["worktree"]) if meta.get("worktree") else None
     if meta.get("workspace"):
         sh.herdr("worktree", "remove", "--workspace", meta["workspace"], "--force", check=False)
