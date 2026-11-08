@@ -16,6 +16,8 @@ Each entry carries one tag:
   megakernel prototype. Treat it as a hypothesis on the round build until one compile
   confirms it. Write the result in `report.md` (see the last section).
 - **[0.1.12, refuted on 0.1.11]**: seen on 0.1.12, and did not reproduce on the round build.
+- **[0.1.12 round]**: confirmed on the round build: TileLang `0.1.12`, torch `2.13.0+cu132`,
+  CUDA 13.2, driver 595.71.05, H200.
 
 ## 1. Principle: write with the low-level forms
 
@@ -107,6 +109,13 @@ Both fixes together:
 - Nsight Compute, one d576 shape: 1.39 ms to 0.893 ms, IPC 0.94 to 1.22.
 - **Verify in SASS after each change**: count `R2UR`, `LDL`/`STL`, HGMMA and DEPBAR, and
   look for ptxas C75xx warnings. The time alone does not show which change worked.
+
+### Touching the accumulator through memory serializes every WGMMA [0.1.12 round]
+
+- Source: gqavarlenfwd-r1.
+- A `"memory"` clobber or a type-punned read (`*(uint*)&acc`) of a WGMMA accumulator
+  anywhere in the kernel makes ptxas serialize every WGMMA (warning C7514).
+- **Fix**: store the f32 values through a csrc helper with plain stores.
 
 ### WGMMA N is split by gcd [0.1.11]
 
@@ -230,7 +239,8 @@ consumer waits: full[k % stages].wait((k % (2*stages)) / stages)
 - **A swizzled shared buffer cannot sit at an offset in a larger allocation** [0.1.12].
   All five forms tried fail for TMA destinations:
   - `T.Buffer(data=..., elem_offset=...)`: the alias must cover the whole parent.
-  - `T.view`: no offset.
+  - `T.view`: no offset. On a swizzle-annotated buffer it is also a new allocation, not an
+    alias [0.1.12 round, gqavarlenfwd-r1].
   - `T.reshape(pool[a:b])`: no dtype.
   - `T.match_buffer(pool[a:b])`: rank rule, then an unbound data variable.
   - `match_buffer` with `view`: the same.
@@ -278,6 +288,10 @@ consumer waits: full[k % stages].wait((k % (2*stages)) / stages)
     `TypeError: 'Buffer' object does not support item assignment`.
   - Fix: write shuffle chains and buffer changes in the traced function or in a
     `@T.macro`.
+- **A barrier element passed into a `T.macro` arrives as a `Var`** [0.1.12 round].
+  Source: gqavarlenfwd-r1.
+  - `kfree[s]` as a macro argument is no longer a barrier.
+  - Fix: pass the barrier buffer and the index, and index inside the macro.
 - **`Immutable value 't6' is re-bound`** means that a stage body was emitted twice
   [0.1.12].
 - **`asm` as a buffer name breaks codegen without an error** [0.1.12]. It is a C++
@@ -313,4 +327,11 @@ consumer waits: full[k % stages].wait((k % (2*stages)) / stages)
 
 - A round records a new fact under `## TileLang knowledge` in its `report.md`, as its
   brief says, and does not change this file.
-- A person adds the entry after reading the report.
+- A person adds the entry after reading the report, only when the fact:
+  - reproduced on a named build, and carries its tag and source;
+  - does not follow from TileLang's documentation or general CUDA and ptxas knowledge;
+  - comes from an action a kernel author would naturally take again;
+  - states its symptom and its fix;
+  - is not already said by an entry here; a partial overlap extends that entry;
+  - holds beyond the kernel it was seen in, without that kernel's numbers;
+  - saves more debugging than it costs every round to read.
