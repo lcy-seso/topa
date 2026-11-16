@@ -1,10 +1,10 @@
-<!-- The TileFoundry text that perf and new-op briefs share. Each `<!-- NAME -->` line starts
+<!-- The TileFoundry text the perf, new-op and extend briefs share. Each `<!-- NAME -->` line starts
 the text that fills `{{FOUNDRY_NAME}}` in a kind's brief. -->
 
 <!-- BAR -->
-- Both `bar met` and `below bar` also require that no row of any op is slower than main:
-  main / candidate below 0.99, the nightly's threshold for a row behind.
-- "Any op" includes every op that shares a kernel the round changes.
+- Both `bar met` and `below bar` also require that no row of a Performance table with a main
+  column is slower than main: main / candidate below 0.99, the nightly's threshold for a row behind.
+- The other-ops table holds every op that shares a kernel the round changes.
 - `topa gate` checks this rule on the Performance medians; the review checks the repeats.
 
 <!-- RULES -->
@@ -42,8 +42,8 @@ The round moves along `{{STATE_PATH}}`. STOPPED ends it without a PR.
   Once the PR is published, REVIEW exits to PR.
 - When a `topa round say` message changes the requirement, move to REQ.
 - Move to STOPPED, after writing `## Stop records`, when a state cannot exit: a case that
-  needs a comparable comparator has none, correctness is not reached, an op that shares a
-  changed kernel is slower than main, the directions are exhausted with no publishable
+  needs a comparable comparator has none, correctness is not reached, a row of a table with a
+  main column is slower than main, the directions are exhausted with no publishable
   result, a dispute survives two reviews, a blocking fault survives final review pass 2, a
   TileFoundry finding blocks a required record, or a person says stop.
 
@@ -112,8 +112,12 @@ Measure this way:
   `git -C {{TILEOPS_WORKTREE}} worktree add --detach {{ROUND_DIR}}/work/<name> <commit>`.
 - Time each snapshot with its `src` first on `PYTHONPATH`.
 - Run at least three repeats; a repeat is one cycle of main, candidate and comparators on
-  the round's GPU, with the L2 flush. Leave main out of a row whose op main does not have.
+  the round's GPU, with the L2 flush. Time main only on the rows of a table with a main column.
 - Keep each repeat's timings, and report the median of `device_busy_ms`.
+- Before timing an other-ops row, compare the generated kernel program (the CUDA source) of
+  main and the candidate on it. Time only the rows whose program differs. Write `unchanged`
+  in both time cells of a row whose program is main's byte for byte, and record the
+  comparison that shows it as `program_diff`.
 
 Write the Performance section of `pr-comments.md` from the last measurement.
 
@@ -144,8 +148,8 @@ Run the affected tests on the GPU, `scripts/validate_manifest.py`, the benchmark
 <!-- COMMENTS -->
 - Test Plan: the `scripts/test_node_delta.py` output and the path each new case guards.
 - TileFoundry Description: `work/final_hir.py` verbatim.
-- Performance: one row per measured workload of the op, and the other ops that share a
-  changed kernel. Delete the other-ops table when there are none.
+- Performance: one row per measured workload of the op, and in the other-ops table the other
+  rows checked against main. Delete that table when there are none.
 - Result And Limitations: opens with the result.
 - TileFoundry Findings.
 - Keep every `## ` heading and every column.
@@ -178,11 +182,13 @@ Run the affected tests on the GPU, `scripts/validate_manifest.py`, the benchmark
   "schedule": {"command": "<tilefoundry command>", "report": "<the TIR>"},
   "twin_check": {"command": "<tilefoundry command>", "report": "<r>"},
   "iterations": [{"change": "<what>", "basis": "<fact>", "predicted_us": 0.0, "measured_us": 0.0}],
-  "benchmark": {"command": "<bench>", "report": "<r>"}
+  "benchmark": {"command": "<bench>", "report": "<r>"},
+  "program_diff": {"command": "<the command that compares each other-ops row's program>", "report": "<r>"}
 }
 ```
 
 - Give `floor` one entry per workload, and `placements` at least two, exactly one chosen.
+- Record `program_diff` when an other-ops row is `unchanged`.
 - Write `findings.json` as `{"findings": [], "issue": null}`, or with the issue URL and per
   finding `id`, `classification`, `command`, `expected`, `actual`, `workaround_cost`,
   `public_surface`, `affected_workloads` and `reproducer`.

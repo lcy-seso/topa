@@ -20,7 +20,7 @@ from topa.round import (
     _entry,
     _fetch_main,
     _issue_work,
-    _spec_only,
+    _manifest_ops,
     brief,
     drop_branch,
     entry_field,
@@ -55,12 +55,13 @@ def filled(name: str, result: str = "bar met", kind: str = "perf") -> str:
     """A kit PR file with every placeholder filled, as a round fills it."""
     text = pr_comments(kind) if name == "pr-comments.md" else (kit() / kind / name).read_text()
     title = {"perf": "[Perf][foundry][Test] Schedule the kernel", "new-op": "[Feat][foundry][Test] Add AFwdOp",
+             "extend": "[Feat][foundry][Test] Serve the zero-centered weight",
              "general": "[BugFix][Norm] Keep the row mean"}[kind]
     text = re.sub(r"^# \[.*", f"# {title}", text)
     text = re.sub(r"<work/final_hir\.py[^\n]*>", HIR.rstrip("\n"), text)
     text = text.replace("sha256:<image digest>", "sha256:" + "a" * 64)
     text = text.replace("**<bar met | below bar>**", f"**{result}**").replace("<bar met | below bar>", result)
-    text = text.replace("Op: <Op>", "Op: AFwdOp").replace("<benchmark module>", "benchmarks.ops.bench_a")
+    text = text.replace("Op: <Op>", "Op: AFwdOp").replace("#<N>", "#7").replace("<benchmark module>", "benchmarks.ops.bench_a")
     text = re.sub(r"^<[^\n]*>$", "1", text, flags=re.MULTILINE)
     return gate.PLACEHOLDER.sub("1", text)
 
@@ -196,6 +197,24 @@ class GateTests(unittest.TestCase):
         path = self.round / name
         path.write_text(change(path.read_text()))
 
+    def test_other_op_row_with_main_s_program_is_untimed_with_its_comparison_recorded(self) -> None:
+        untimed = "| BFwdOp | w | unchanged | unchanged |"
+        other = "| --- | --- | ---: | ---: |\n"
+        table = (self.round / "pr-comments.md").read_text().replace(f"{other}| 1 | 1 | 1 | 1 |", other + untimed)
+        (self.round / "pr-comments.md").write_text(table)
+        with self.assertRaisesRegex(gate.GateError, "program_diff must be an object"):
+            self.validate()
+        self.provenance["program_diff"] = {"command": "diff -r main/ cand/", "report": "e/log"}
+        self.write_provenance()
+        self.assertEqual(self.validate()["result"], "bar met")
+        # Only a pair of markers in an other-ops row stands for main's program; a results row needs times.
+        for old, new in ((untimed, "| BFwdOp | w | unchanged | 1 |"),
+                         ("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | unchanged | unchanged | 1 | 1 | 1 | 1 |")):
+            with self.subTest(new):
+                (self.round / "pr-comments.md").write_text(table.replace(old, new))
+                with self.assertRaisesRegex(gate.GateError, "needs positive times"):
+                    self.validate()
+
     def test_tie_within_a_timer_step_meets_the_bar(self) -> None:
         self.edit("pr-comments.md", lambda t: t.replace("| 1 | 1 | 1 | 1 | 1 | 1 | 1 |", "| 1 | 2 | 1.02 | 0.5 | 1 | 1 | 0.98 |")
                   .replace("| timer step (us) | 1 |", "| timer step (us) | 0.02 |"))
@@ -223,6 +242,7 @@ class GateTests(unittest.TestCase):
         gate.validate_round(self.round, self.repo, kind="general", issue=7)
         for message, text in {
             "line Closes #7": body.replace("Closes #7", "Refs #7"),
+            "must end with the line Closes #7": body + "\n- 1\n",
             "Summary section alone": body + "\n## Regression\n\n- 1\n",
             "title does not follow \\[Type\\]": body.replace("[BugFix][Norm]", "[Bug]"),
             "placeholder": None,
@@ -334,6 +354,76 @@ class GateTests(unittest.TestCase):
                 self.write_provenance()
                 with self.assertRaisesRegex(gate.GateError, message):
                     self.validate_new_op()
+
+    def extend(self) -> None:
+        """Turn the complete perf round into a complete extend round on issue 7: it serves case a, and keeps b."""
+        (self.round / "pr-template.md").write_text(filled("pr-template.md", kind="extend"))
+        self.edit_extend_tables("| AFwdOp | b |")
+        self.provenance |= {"workloads": ["AFwdOp a"], "base_tests": {"command": "pytest t", "report": "e/log"}}
+        self.provenance["floor"][0]["workload"] = "AFwdOp a"
+        self.inventory = ("AFwdOp a", "AFwdOp b")
+        self.write_provenance()
+
+    def edit_extend_tables(self, other: str) -> None:
+        (self.round / "pr-comments.md").write_text(filled("pr-comments.md", kind="extend").replace(
+            "| 1 | 1 | 1 | 1 | 1 | 1 |", "| AFwdOp a | 1 | 1 | 1 | 1 | 1 |").replace(
+            "| --- | --- | ---: | ---: |\n| 1 |", f"| --- | --- | ---: | ---: |\n{other}"))
+
+    def validate_extend(self) -> dict:
+        return gate.validate_round(self.round, self.repo, kind="extend", issue=7, inventory=self.inventory)
+
+    def test_extend_round_passes(self) -> None:
+        """The rows it serves meet the bar with no main column; below bar asks for the stop records."""
+        self.extend()
+        self.assertEqual(self.validate_extend()["result"], "bar met")
+        # A case whose generated program is main's is listed untimed, with the program comparison recorded.
+        self.edit_extend_tables("| AFwdOp | b | unchanged | unchanged |")
+        self.provenance["program_diff"] = {"command": "diff -r main/ cand/", "report": "e/log"}
+        self.write_provenance()
+        self.assertEqual(self.validate_extend()["result"], "bar met")
+        (self.round / "report.md").write_text("## Stop records\n\n(1), (2) and (3) hold for AFwdOp a.\n")
+        self.provenance["result"] = "below bar"
+        self.write_provenance()
+        self.edit("pr-comments.md", lambda t: t.replace("**bar met**", "**below bar**")
+                  .replace("| AFwdOp a | 1 | 1 | 1 | 1 | 1 |", "| AFwdOp a | 1 | 0.5 | 2 | 0.5 | 0.5 |")
+                  .replace("| timer step (us) | 1 |", "| timer step (us) | 0.02 |"))
+        self.assertEqual(self.validate_extend()["result"], "below bar")
+
+    def test_extend_defect_fails(self) -> None:
+        p = self.provenance
+        cases = {
+            "title does not follow \\[Feat\\]\\[foundry\\]": lambda: self.edit(
+                "pr-template.md", lambda t: t.replace("[Feat][foundry][Test]", "[BugFix][foundry][Test]")),
+            "must end with the line Closes #7": lambda: self.edit("pr-template.md", lambda t: t + "\nOp: AFwdOp\n"),
+            "no table has the cases AFwdOp b": lambda: self.edit_extend_tables("| OtherFwdOp | b |"),
+            "row 'AFwdOp b' is slower than main": lambda: self.edit_extend_tables("| AFwdOp | b | 1 | 2 |"),
+            "results table holds AFwdOp b, which are not rows to serve": lambda: (
+                self.edit_extend_tables("| OtherFwdOp | w | 1 | 1 |"), self.edit("pr-comments.md", lambda t: t.replace("| AFwdOp a | 1 | 1 | 1 | 1 | 1 |",
+                                                      "| AFwdOp a | 1 | 1 | 1 | 1 | 1 |\n| AFwdOp b | 1 | 1 | 1 | 1 | 1 |"))),
+            "provenance workloads AFwdOp z are not admitted cases": lambda: p.update(workloads=["AFwdOp z"]),
+            "forbidden paths: src/tileops/manifest/spec/a.yaml": lambda: self.commit(
+                **{MANIFEST_PATH: MANIFEST.format(a="implemented", b="spec-only")}),
+            # A file moved out of a forbidden root is still a change under it.
+            "forbidden paths: src/tileops/manifest/spec/a.yaml$": lambda: (
+                git(self.repo, "mv", MANIFEST_PATH, "src/tileops/a.yaml"), self.commit()),
+            "program_diff must be an object": lambda: self.edit_extend_tables("| AFwdOp | b | unchanged | unchanged |"),
+            "base_tests must be an object": lambda: p.pop("base_tests"),
+            "non-empty `## Stop records`": lambda: (p.update(result="below bar"), self.edit(
+                "pr-comments.md", lambda t: t.replace("**bar met**", "**below bar**"))),
+        }
+        for message, defect in cases.items():
+            with self.subTest(message):
+                self.tearDown()
+                self.setUp()
+                p = self.provenance
+                self.extend()
+                defect()
+                self.write_provenance()
+                with self.assertRaisesRegex(gate.GateError, message):
+                    self.validate_extend()
+        self.commit(**{MANIFEST_PATH: MANIFEST.format(a="implemented", b="spec-only")})
+        with self.assertRaisesRegex(gate.GateError, "an extension changes no src/tileops/manifest/ file"):
+            gate.check_op(gate.Evidence(self.round, self.repo, "extend", 7, inventory=self.inventory))
 
     def test_unfilled_template_fails(self) -> None:
         for name in ("pr-template.md", "pr-comments.md"):
@@ -498,7 +588,8 @@ class RoundTests(unittest.TestCase):
         self.assertRegex(long, r"^[a-z][a-z0-9_-]{0,31}$")
 
     def admit(self, issues: dict | None = None, prs: list | None = None, found: list | None = None,
-              entry: list[str] = ROPE_ENTRY, spec_only: tuple[str, ...] = ("RoPECosSinFwdOp",)):
+              entry: list[str] = ROPE_ENTRY, spec_only: tuple[str, ...] = ("RoPECosSinFwdOp",),
+              implemented: tuple[str, ...] = ()):
         """Mock what admission reads: the fetched main, the manifest, the issues, the PRs and the gh login."""
         def gh_json(*args):
             if args[:2] == ("issue", "view"):
@@ -513,8 +604,10 @@ class RoundTests(unittest.TestCase):
                       mock.patch("topa.sh.require"), mock.patch("topa.round.topa_binary"),
                       mock.patch("topa.round._fetch_main", return_value="c" * 40),
                       mock.patch("topa.round._entry", return_value=("src/tileops/manifest/spec/rope.yaml", entry)),
-                      mock.patch("topa.round._spec_only", side_effect=lambda config, commit, names: [
-                          name for name in names if name in spec_only]),
+                      mock.patch("topa.round._manifest_ops", side_effect=lambda config, commit, names: {
+                          name: (f"{name}.yaml", [line.replace("spec-only", "implemented") if name in implemented
+                                                  else line for line in ROPE_ENTRY])
+                          for name in names if name in spec_only + implemented}),
                       mock.patch("topa.sh.gh_json", side_effect=gh_json),
                       mock.patch("topa.sh.gh_login", return_value="me")):
             stack.enter_context(patch)
@@ -540,27 +633,44 @@ class RoundTests(unittest.TestCase):
             # In state PR a TileFoundry round does not rerun the cleanup and reviews of PR steps 4-6.
             self.assertEqual("skip steps 4-6" in text, kind != "general")
             self.assertIn("4. Run cleanup steps 5-6.\n5. Run the review", text)
-            self.assertEqual("### Op and tests" in text, kind == "new-op")
-            self.assertEqual("Add no op." in text, kind == "perf")
+            self.assertEqual("### Op and tests" in text, kind in ("new-op", "extend"))
+            self.assertEqual("Add no op." in text, kind in ("perf", "extend"))
             # Only a perf brief carries earlier attempts.
             self.assertEqual("PRIOR_ATTEMPTS" in text, kind == "perf")
         # Every piece of the shared TileFoundry text reaches both kinds that build with TileFoundry.
-        for kind in ("perf", "new-op"):
+        for kind in gate.FOUNDRY_KINDS:
             used = set(re.findall(r"\{\{(FOUNDRY_[A-Z_]+)\}\}", (kit() / kind / "brief.md").read_text()))
             self.assertEqual(used, set(foundry_text()), kind)
         with self.assertRaises(SystemExit):
             render("{{A}} {{B}}", {"A": 1})
 
-    def test_issue_routes_to_perf_new_op_or_general(self) -> None:
-        """`[Perf]` wins; then a title that names exactly one spec-only op; then general. A label does not route."""
+    def test_issue_routes_to_perf_new_op_extend_or_general(self) -> None:
+        """`[Perf]` wins; a `[Feat]` title naming one spec-only op gets new-op, only implemented ops extend;
+        any other issue general. A label does not route."""
         self.admit({number: issue(number, title, labels) for number, title, labels in (
             (1, "[FEAT][RoPE] Add the cos/sin cache op", ["new-op"]), (2, "[FEAT][RoPE] Add RoPECosSinFwdOp", []),
-            (3, "[Perf] Speed up RoPECosSinFwdOp", []), (4, "[BUG][Norm] Fix SoftmaxFwdOp", ["bug"]),
-            (5, "[FEAT] Add RoPECosSinFwdOp and AFwdOp", []))}, spec_only=("RoPECosSinFwdOp", "AFwdOp"))
-        plans = [start(defaults(), issue=number, dry_run=True) for number in (1, 2, 3, 4)]
-        self.assertEqual([(plan["kind"], plan["branch"], plan.get("op")) for plan in plans], [
-            ("general", "feat/issue/issue-1-r1", None), ("new-op", "feat/rope/ropecossinfwd-r1", "RoPECosSinFwdOp"),
-            ("perf", "perf/issue/issue-3-r1", None), ("general", "fix/issue/issue-4-r1", None)])
+            (3, "[Perf] Speed up RoPECosSinFwdOp", []), (4, "[BUG][Norm] Fix SoftmaxFwdOp and BFwdOp", ["bug"]),
+            (5, "[FEAT] Add RoPECosSinFwdOp and AFwdOp", []), (6, "[FEAT] Serve SoftmaxFwdOp and BFwdOp with NoSuchOp", []),
+            (7, "[Feat] Tune SoftmaxFwdOp tails", []), (8, "[FEAT] Serve CFwdOp", []),
+            (9, "[BugFix] Fix RoPECosSinFwdOp", []), (10, "[Doc] Explain SoftmaxFwdOp", []))},
+            spec_only=("RoPECosSinFwdOp", "AFwdOp"), implemented=("SoftmaxFwdOp", "BFwdOp"))
+        plans = [start(defaults(), issue=number, dry_run=True) for number in (1, 2, 3, 4, 6, 9, 10)]
+        self.assertEqual([(plan["kind"], plan["branch"], plan.get("op"), plan.get("ops")) for plan in plans], [
+            ("general", "feat/issue/issue-1-r1", None, None),
+            ("new-op", "feat/rope/ropecossinfwd-r1", "RoPECosSinFwdOp", None),
+            ("perf", "perf/issue/issue-3-r1", None, None),
+            ("general", "fix/issue/issue-4-r1", None, None),
+            ("extend", "feat/issue/issue-6-r1", None, ["SoftmaxFwdOp", "BFwdOp"]),
+            ("general", "fix/issue/issue-9-r1", None, None), ("general", "doc/issue/issue-10-r1", None, None)])
+        # Two ops with the same labels keep apart by the op in each case.
+        self.assertEqual(plans[4]["inventory"], [f"{op} llama3-8b-prefill {{T: {t}}}" for op in ("SoftmaxFwdOp", "BFwdOp")
+                                                 for t in ("float16", "bfloat16")])
+        with mock.patch("topa.round._manifest_ops", return_value={"CFwdOp": ("c.yaml", ["  status: retired"])}), \
+                self.assertRaisesRegex(SystemExit, "names ops of no known status: CFwdOp is retired"):
+            start(defaults(), issue=8, dry_run=True)
+        ledger.append("create", **plans[4])
+        with self.assertRaisesRegex(SystemExit, "round issue-6-r1 already works SoftmaxFwdOp"):
+            start(defaults(), issue=7, dry_run=True)
         self.assertEqual((plans[1]["family"], plans[1]["issue"], plans[1]["inventory"]),
                          ("rope", 2, ["llama3-8b-prefill {T: float16}", "llama3-8b-prefill {T: bfloat16}"]))
         with self.assertRaisesRegex(SystemExit, "several spec-only ops \\(RoPECosSinFwdOp, AFwdOp\\)"):
@@ -623,6 +733,21 @@ class RoundTests(unittest.TestCase):
                     start(defaults(), op, issue=number, dry_run=True)
                 self.assertEqual(ledger.rounds(), {})
 
+    def test_extend_admission_refuses_only_an_issue_someone_else_owns(self) -> None:
+        """Another assignee or another PR closing the issue refuses; another PR that only names the op does not."""
+        naming = {"number": 9, "title": "[Perf] Tune SoftmaxFwdOp", "body": "", "author": {"login": "alice"}, "url": "u9"}
+        closing = {"number": 10, "title": "[Feat] x", "body": "Closes #2", "author": {"login": "bob"}, "url": "u10"}
+        for assignees, prs, refusal in (([], [naming], None), (["alice"], [], "issue #2 is assigned to alice"),
+                                        ([], [closing], "PR #10 by bob already works issue #2")):
+            with self.subTest(refusal):
+                self.admit({2: issue(2, "[Feat] Serve SoftmaxFwdOp", [], assignees=assignees)}, prs=prs,
+                           spec_only=(), implemented=("SoftmaxFwdOp",))
+                if refusal is None:
+                    self.assertEqual(start(defaults(), issue=2, dry_run=True)["kind"], "extend")
+                    continue
+                with self.assertRaisesRegex(SystemExit, refusal):
+                    start(defaults(), issue=2, dry_run=True)
+
     def test_manifest_is_read_from_the_fetched_upstream_main(self) -> None:
         entry = ("# family\n\nRoPECosSinFwdOp:  # cache\n  family: rope\n  ref_api: \"x\"\n  # status: implemented\n"
                  "  signature:\n    status: implemented\n  status: spec-only\n  workloads:\n"
@@ -649,12 +774,12 @@ class RoundTests(unittest.TestCase):
             config_ = defaults(tileops_repo=local)
             with mock.patch("topa.sh.github_remote", return_value="origin"):
                 commit = _fetch_main(config_)
-            found = [_spec_only(config_, commit, names)
-                     for names in (["SoftmaxFwdOp", "RoPECosSinFwdOp"], ["NoSuchFwdOp"])]
+            found = _manifest_ops(config_, commit, ["RoPECosSinFwdOp", "NoSuchFwdOp"])
             self.assertEqual(_entry(config_, commit, "RoPECosSinFwdOp")[0], "src/tileops/manifest/spec/rope.yaml")
             with self.assertRaisesRegex(SystemExit, "SoftmaxFwdOp has 2 manifest entries"):
-                _entry(config_, commit, "SoftmaxFwdOp")
-        self.assertEqual(found, [["SoftmaxFwdOp", "RoPECosSinFwdOp"], []])
+                _manifest_ops(config_, commit, ["SoftmaxFwdOp"])
+        self.assertEqual({op: path for op, (path, _) in found.items()},
+                         {"RoPECosSinFwdOp": "src/tileops/manifest/spec/rope.yaml"})
 
     def test_branch_is_dropped_only_when_its_pr_merged_its_tip(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -732,6 +857,7 @@ class TransitionTests(unittest.TestCase):
         self.assertNotIn("CLEAN", new_op["HIR"])
         self.assertIn("PR", new_op["REVIEW"])
         self.assertNotIn("DONE", new_op)
+        self.assertEqual(states.TRANSITIONS["extend"], new_op)
         meta = json.loads((self.dir / "round.json").read_text())
         (self.dir / "round.json").write_text(json.dumps({**meta, "kind": "general"}))
         with self.assertRaisesRegex(SystemExit, "a general round has no states"):

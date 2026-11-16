@@ -50,13 +50,13 @@ Analysis: tilefoundry `<version>`, `<target>`. `run.sh` below reproduces every n
 | timer | `<timer of the TileOPs benchmark>` |
 | timer step (us) | <the timer's resolution in microseconds> |
 
-Method: <how main, the candidate and the comparators were alternated on one GPU, main only where it has the op, and how many runs give each median>. Every comparator counted toward the bar passes the case reference before timing. Times are `device_busy_ms`. Ratio: comparator / candidate.
+Method: <how main, the candidate and the comparators were alternated on one GPU, main only on the rows of a table with a main column that are not `unchanged`, how the generated programs were compared, and how many runs give each median>. Every comparator counted toward the bar passes the case reference before timing. Times are `device_busy_ms`. Ratio: comparator / candidate.
 
 | Workload | main (us) | candidate (us) | DRAM floor (us) | candidate / DRAM floor | <comparator> (us) | ratio |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | <workload> | <main median> | <candidate median> | <DRAM floor> | <candidate / DRAM floor> | <comparator median> | <comparator / candidate> |
 
-Other ops that share a changed kernel:
+Other rows checked against main:
 
 | Op | Workload | main (us) | candidate (us) |
 | --- | --- | ---: | ---: |

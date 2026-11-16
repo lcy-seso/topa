@@ -181,7 +181,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("round")
     p.add_argument("text", nargs="+")
     p.set_defaults(func=_round_say)
-    p = rounds.add_parser("transition", help="move a perf or new-op round to its next state (run by the agent)")
+    p = rounds.add_parser("transition", help="move a TileFoundry round to its next state (run by the agent)")
     p.add_argument("state", choices=STATES)
     p.add_argument("--reason", required=True)
     p.add_argument("--round", help="round slug; default: the round directory holding the cwd")

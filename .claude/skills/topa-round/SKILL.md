@@ -13,7 +13,7 @@ Run `topa` from `PATH`. State lives in `~/.topa/`:
 
 | The user wants | Run |
 | --- | --- |
-| an overview | `topa round status` (`--all` includes removed rounds; the third column is a perf or new-op round's state) |
+| an overview | `topa round status` (`--all` includes removed rounds; the third column is a TileFoundry round's state) |
 | one round's history | `topa round log <slug>` |
 | what the agent is doing | `herdr agent read <pane>` (pane from status) |
 | to tell the agent something | `topa round say <slug> "<text>"` |
@@ -43,7 +43,7 @@ Run `topa` from `PATH`. State lives in `~/.topa/`:
 ## Reviewing a round's PR
 
 Read `rounds/<slug>/report.md`, `provenance.json`, the PR and its comments.
-`topa gate --round <slug>` rechecks the evidence. For a perf or new-op round, report the
+`topa gate --round <slug>` rechecks the evidence. For a TileFoundry round, report the
 result (`bar met` or `below bar`), the rows still behind their fastest comparator and any
 row slower than main. For any round, report whether the PR resolves its issue and any
 TileFoundry issue the round filed.

@@ -32,11 +32,10 @@ PLACEHOLDER = re.compile(r"\{\{([A-Z_]+)\}\}")
 
 # The round kinds; each has a folder of that name in `kit/round/`. The TileFoundry kinds also share
 # the text in `kit/round/foundry/`.
-KINDS = ("perf", "new-op", "general")
+KINDS = ("perf", "new-op", "extend", "general")
 FOUNDRY_PART = re.compile(r"^<!-- ([A-Z_]+) -->\n", re.MULTILINE)
-# A TileOPs issue whose title starts with `[Perf]` gets the perf contract; one whose title names
-# exactly one op the manifest only specifies gets the new-op contract.
 PERF_ISSUE = re.compile(r"\[perf\]", re.IGNORECASE)
+FEAT_ISSUE = re.compile(r"\[feat\]", re.IGNORECASE)
 ISSUE_FIELDS = "number,title,body,labels,url,state,assignees"
 OP_NAME = re.compile(r"\b[A-Z][A-Za-z0-9_]*Op\b")
 MANIFEST_SPEC = "src/tileops/manifest/spec/"
@@ -188,7 +187,7 @@ def _cd_pane(pane: str, path: Path) -> None:
 
 
 def foundry_text() -> dict[str, str]:
-    """The TileFoundry text perf and new-op briefs share: `FOUNDRY_<NAME>` to the text under `<!-- NAME -->`."""
+    """The TileFoundry text the briefs of `FOUNDRY_KINDS` share: `FOUNDRY_<NAME>` to the text under `<!-- NAME -->`."""
     parts = FOUNDRY_PART.split((kit() / "foundry" / "brief.md").read_text())
     return {f"FOUNDRY_{name}": text.strip() for name, text in zip(parts[1::2], parts[2::2])}
 
@@ -205,7 +204,8 @@ def brief(kind: str, values: dict[str, Any]) -> str:
 def pr_comments(kind: str) -> str:
     """The PR comments file a round of *kind* fills in.
 
-    Perf and new-op share the TileFoundry one; a new op has no main, so its results table drops that column.
+    The TileFoundry kinds share one. A new op's or an extension's rows answer to comparators alone, so
+    their results table drops the main column.
     """
     if kind not in FOUNDRY_KINDS:
         return (kit() / kind / "pr-comments.md").read_text()
@@ -381,16 +381,9 @@ def _entry(config: Config, commit: str, op: str) -> tuple[str, list[str]]:
     return found[0], entry or []
 
 
-def _spec_only(config: Config, commit: str, names: Iterable[str]) -> list[str]:
-    """The ops of *names* with a `spec-only` manifest entry at *commit*."""
-    spec_only = []
-    for op in names:
-        for path in dict.fromkeys(_entry_files(config, commit, op)):
-            text = sh.run(["git", "-C", config.tileops_repo, "show", f"{commit}:{path}"])
-            if entry_field(manifest_entry(text, op) or [], "status") == "spec-only":
-                spec_only.append(op)
-                break
-    return spec_only
+def _manifest_ops(config: Config, commit: str, names: Iterable[str]) -> dict[str, tuple[str, list[str]]]:
+    """The manifest entry, file and lines, of each op of *names* that has one at *commit*."""
+    return {op: _entry(config, commit, op) for op in names if _entry_files(config, commit, op)}
 
 
 def _names(op: str, text: str | None) -> bool:
@@ -435,6 +428,29 @@ def _issue_work(issue: dict[str, Any], kind: str) -> tuple[dict[str, Any], dict[
     return plan, {"TITLE": issue["title"], "REQUIREMENT": requirement, "LINK": link}
 
 
+def _extend_work(issue: dict[str, Any],
+                 entries: dict[str, tuple[str, list[str]]]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The plan fields and brief values of a round on *issue* that changes the implemented ops of *entries*."""
+    cases = {op: _cases(op, path, entry) for op, (path, entry) in entries.items()}
+    listed = "\n".join(f"- `{op} {case}`" for op in entries for case in cases[op])
+    requirement = (f"{_quoted(issue)}\n\nThe ops it names, with their manifest entries at the TileOPs base: "
+                   f"{', '.join(f'`{op}` in `{path}`' for op, (path, _) in entries.items())}. Their cases, "
+                   f"each op, workload `label` and dtype case:\n\n{listed}\n\n"
+                   "Take the issue, these entries and these cases as the whole requirement.")
+    plan = {"kind": "extend", "issue": issue["number"], "issue_url": issue["url"], "ops": list(entries),
+            "inventory": [f"{op} {case}" for op in entries for case in cases[op]]}
+    return plan, {"TITLE": issue["title"], "REQUIREMENT": requirement,
+                  "LINK": f"End Summary with the line `Closes #{issue['number']}`."}
+
+
+def _cases(op: str, path: str, entry: list[str]) -> list[str]:
+    """The entry's workload `label` x dtype cases; an entry without a family or a label refuses."""
+    cases = inventory(entry)
+    if entry_field(entry, "family") is None or not cases:
+        raise SystemExit(f"the manifest entry of {op} in {path} needs a family and a label on every workload")
+    return cases
+
+
 def _new_op_work(op: str, path: str, family: str, cases: list[str],
                  issue: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
     """The plan fields and brief values of a round that adds the spec-only *op*."""
@@ -466,17 +482,31 @@ class Admission:
 
 
 def _route(config: Config, name: str | None, number: int | None, page: wiki.Page | None) -> Admission:
-    """Route and Issue: the kind of the round and the issue it works, or a refusal."""
+    """Route and Issue: the kind of the round and the issue it works, or a refusal.
+
+    Kernel work of a perf or feature issue runs through TileFoundry, so an issue routes by its
+    title's TileOPs type and the ops it names (the words with a manifest entry): `[Perf]` gets
+    perf; `[Feat]` naming one spec-only op new-op, several refuse, only implemented ops extend;
+    any other issue general.
+    """
     issue = _issue(config, number) if number is not None else None
     admitted = _fetch_main(config)
     if name is None:
         assert issue is not None
         if PERF_ISSUE.match(issue["title"]):
             return Admission(*_issue_work(issue, "perf"), admitted, f"issue-{number}", issue=issue)
-        spec_only = _spec_only(config, admitted, dict.fromkeys(OP_NAME.findall(issue["title"])))
+        names = OP_NAME.findall(issue["title"]) if FEAT_ISSUE.match(issue["title"]) else []
+        named = _manifest_ops(config, admitted, dict.fromkeys(names))
+        status = {op: entry_field(entry, "status") for op, (_, entry) in named.items()}
+        unknown = [f"{op} is {state}" for op, state in status.items() if state not in ("spec-only", "implemented")]
+        if unknown:
+            raise SystemExit(f"issue #{number} names ops of no known status: {', '.join(unknown)}")
+        spec_only = [op for op, state in status.items() if state == "spec-only"]
         if len(spec_only) > 1:
             raise SystemExit(f"issue #{number} names several spec-only ops ({', '.join(spec_only)}); "
                              "start the one to add with `topa round start <Op> --issue <N>`")
+        if named and not spec_only:
+            return Admission(*_extend_work(issue, named), admitted, f"issue-{number}", issue=issue)
         if not spec_only:
             return Admission(*_issue_work(issue, "general"), admitted, f"issue-{number}", issue=issue)
         name = spec_only[0]
@@ -488,9 +518,7 @@ def _route(config: Config, name: str | None, number: int | None, page: wiki.Page
         page = page or wiki.fetch(config)
         op = page.op(name)
         return Admission(*_wiki_work(op, page), admitted, name, category=op.category, queue=op)
-    family, cases = entry_field(entry, "family"), inventory(entry)
-    if family is None or not cases:
-        raise SystemExit(f"the manifest entry of {name} in {path} needs a family and a label on every workload")
+    family, cases = entry_field(entry, "family"), _cases(name, path, entry)
     if issue is not None and not _names(name, issue["title"]):
         raise SystemExit(f"the title of issue #{number} does not name {name}")
     issue = issue or _find_issue(config, name)
@@ -498,8 +526,9 @@ def _route(config: Config, name: str | None, number: int | None, page: wiki.Page
 
 
 def _check_owner(config: Config, admission: Admission, me: str) -> None:
-    """Ownership of a new op: no one else holds its issue or has a PR open on the op or the issue."""
-    op, issue = admission.work["op"], admission.issue
+    """Ownership of a new op or an extension: no one else holds its issue or has a PR open on the
+    issue or the new op."""
+    op, issue = admission.work.get("op"), admission.issue
     others = [user["login"] for user in (issue or {}).get("assignees", []) if user["login"].lower() != me.lower()]
     if others:
         raise SystemExit(f"issue #{issue['number']} is assigned to {', '.join(others)}")
@@ -513,8 +542,14 @@ def _check_owner(config: Config, admission: Admission, me: str) -> None:
     for pr in prs:
         if pr["author"]["login"].lower() == me.lower():
             continue
-        if _names(op, pr["title"]) or _names(op, pr["body"]) or (closes and closes.search(pr["body"] or "")):
-            raise SystemExit(f"PR #{pr['number']} by {pr['author']['login']} already works {op}: {pr['url']}")
+        if (op and (_names(op, pr["title"]) or _names(op, pr["body"]))) or (closes and closes.search(pr["body"] or "")):
+            raise SystemExit(f"PR #{pr['number']} by {pr['author']['login']} already works "
+                             f"{op or 'issue #' + str(issue['number'])}: {pr['url']}")
+
+
+def _ops(work: dict[str, Any]) -> set[str]:
+    """The ops a round works: its `op`, or an extension's `ops`."""
+    return {*work.get("ops", ()), *filter(None, [work.get("op")])}
 
 
 def _branch(plan: dict[str, Any], title: str, category: str, slug: str) -> str:
@@ -543,9 +578,8 @@ def start(config: Config, name: str | None = None, *, issue: int | None = None, 
         work, values, number = admission.work, admission.values, admission.work.get("issue")
         views = ledger.rounds()
         for view in views.values():
-            taken = [text for key, value, text in (("op", work.get("op"), work.get("op")),
-                                                   ("issue", number, f"issue #{number}"))
-                     if value is not None and view.get(key) == value]
+            taken = sorted(_ops(view) & _ops(work)) + [f"issue #{number}"] * (
+                number is not None and view.get("issue") == number)
             if taken and view["state"] in ledger.LIVE:
                 raise SystemExit(f"round {view['round']} already works {taken[0]}")
         live = [view["round"] for view in views.values() if view["state"] in ledger.LIVE]
@@ -553,7 +587,7 @@ def start(config: Config, name: str | None = None, *, issue: int | None = None, 
             raise SystemExit(f"{len(live)} rounds are live ({', '.join(live)}); max_rounds is "
                              f"{config.max_rounds}. Stop one, or pass --force.")
         me = sh.gh_login() if admission.issue or work["kind"] == "new-op" else ""
-        if work["kind"] == "new-op":
+        if work["kind"] in ("new-op", "extend"):
             _check_owner(config, admission, me)
         assign = bool(admission.issue) and me.lower() not in {
             user["login"].lower() for user in admission.issue.get("assignees", [])}
@@ -566,7 +600,7 @@ def start(config: Config, name: str | None = None, *, issue: int | None = None, 
             return plan
         if round_dir.exists() or worktree.exists():
             raise SystemExit(f"{round_dir} or {worktree} already exists")
-        # A perf or new-op round enters its state graph at REQ.
+        # A TileFoundry round enters its state graph at REQ.
         ledger.append("create", **plan, **({"phase": "REQ"} if work["kind"] in FOUNDRY_KINDS else {}))
     try:
         if assign:
@@ -667,7 +701,7 @@ def say(config: Config, slug: str, text: str) -> bool:
 
 
 def transition(config: Config, target: str, reason: str, slug: str | None = None) -> dict[str, Any]:
-    """Move a perf or new-op round to *target*: the edge must be in its kind's table, and its checks must pass."""
+    """Move a TileFoundry round to *target*: the edge must be in its kind's table, and its checks must pass."""
     current = find(config, slug)
     meta = current.meta
     kind = meta.get("kind", "perf")
