@@ -20,13 +20,16 @@ class GateError(ValueError):
     """The round is missing mechanically verifiable PR evidence."""
 
 
-# The kinds that build a kernel with TileFoundry and pass its records.
-FOUNDRY_KINDS = ("perf", "new-op")
+# The kinds that build a kernel with TileFoundry and pass its records; only they change a kernel.
+FOUNDRY_KINDS = ("perf", "new-op", "extend")
+KERNELS = ("src/tileops/_kernels/", "src/tileops/csrc/")
 # The repository's own tooling, and for a perf round what it is measured against; a new op adds
 # its benchmark and workloads, and changes only its manifest status line (`check_op`).
 FORBIDDEN_ROOTS = {
     "perf": ("benchmarks/", "workloads/", "src/tileops/manifest/", "scripts/", ".github/"),
     "new-op": ("scripts/", ".github/"),
+    "extend": ("src/tileops/manifest/", "scripts/", ".github/"),
+    "general": KERNELS,
 }
 # The round's PR, from the files of its kind in `kit/round/`, filled in: `pr-template.md` is
 # the title and a body of one Summary section, which becomes the squash commit's message;
@@ -35,15 +38,19 @@ PR_FILE = "pr-template.md"
 COMMENTS_FILE = "pr-comments.md"
 FOUNDRY_SECTIONS = ("Test Plan", "TileFoundry Description", "Performance", "Result And Limitations",
                     "TileFoundry Findings")
-COMMENT_SECTIONS = {"perf": FOUNDRY_SECTIONS, "new-op": FOUNDRY_SECTIONS, "general": ("Test Plan",)}
+COMMENT_SECTIONS = {**dict.fromkeys(FOUNDRY_KINDS, FOUNDRY_SECTIONS), "general": ("Test Plan",)}
 # TileOPs `scripts/ci/types.sh`: `[Type] description` or `[Type][Scope] description`.
-GENERAL_TITLE = re.compile(r"\[(Bench|BugFix|Chore|CI|Design|Doc|Enhancement|Feat|Fix|Maintain|Perf|Refactor|"
-                           r"Style|Test)\](\[[A-Za-z0-9_-]+\])? [A-Z`].+")
+TYPES = "Bench|BugFix|Chore|CI|Design|Doc|Enhancement|Feat|Fix|Maintain|Perf|Refactor|Style|Test"
+GENERAL_TITLE = re.compile(rf"\[({TYPES})\](\[[A-Za-z0-9_-]+\])? [A-Z`].+")
 # The `[foundry]` origin makes TileOPs's auto-label workflow add the `foundry` label.
 FOUNDRY_TITLE = {
     "perf": ("[Perf][foundry][Family] Description", re.compile(r"\[Perf\]\[foundry\]\[[A-Za-z0-9_-]+\] [A-Z`].+")),
     "new-op": ("[Feat][foundry][Family] Description", re.compile(r"\[Feat\]\[foundry\]\[[A-Za-z0-9_-]+\] [A-Z`].+")),
+    "extend": ("[Type][foundry][Family] Description",
+               re.compile(rf"\[({TYPES})\]\[foundry\]\[[A-Za-z0-9_-]+\] [A-Z`].+")),
 }
+# The kinds whose PR body ends with the `Op:`, `Benchmark:` and `Result:` lines `topa.history` reads.
+TRAILER_KINDS = ("perf", "new-op")
 RESULTS = ("bar met", "below bar")
 # A time ratio at or above this is noise: the nightly's threshold for a row behind.
 NOISE = 0.99
@@ -114,7 +121,8 @@ def _git(repo: Path, *args: str, text: bool = True) -> subprocess.CompletedProce
 def _validate_production_diff(repo: Path, base: str, head: str, kind: str) -> list[str]:
     """The paths the diff changes; it must change some, with no authorship trailer, and none
     the kind forbids."""
-    process = _git(repo, "diff", "--name-only", "-z", base, head, text=False)
+    # Without renames, a moved file lists both its old and its new path.
+    process = _git(repo, "diff", "--name-only", "--no-renames", "-z", base, head, text=False)
     changed = [part.decode(errors="replace") for part in process.stdout.split(b"\0") if part]
     if not changed:
         raise GateError("base-to-head production diff is empty")
@@ -206,13 +214,15 @@ def _not_slower(table: list[list[str]], label: str) -> set[str]:
 
 
 def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, result: str,
-                          main: bool = True) -> None:
+                          main: bool = True, inventory: tuple[str, ...] = ()) -> None:
     """The environment, the method, one row per workload of the op, and no row slower than main.
 
     The op's own table holds the bar: under `bar met` each row beats its comparator or ties
     it, or the DRAM floor, within one timer step; under `below bar` some row beats main beyond
     `NOISE`. Other ops that share a changed kernel only must not be slower than main.
-    A new op has no *main*: its table has no main column, and `below bar` asks for nothing more.
+    A new op's or an extension's rows answer to comparators alone (*main* false): its table has no
+    main column, and `below bar` asks for nothing more. Each case of *inventory* is a row of one of the two tables,
+    and of the results table only when it is one of *workloads*.
     """
     lines = text.splitlines()
     values = {row[0]: row[1].strip("`") for row in _table(lines, "| Environment |")[1:] if len(row) >= 2}
@@ -247,6 +257,12 @@ def _validate_performance(text: str, workloads: tuple[str, ...], measured: int, 
     absent = [name for name in workloads if name not in seen]
     if absent:
         raise GateError(f"Performance: the results table lacks the rows behind {', '.join(absent)}")
+    unlisted = [name for name in inventory if name not in names]
+    if unlisted:
+        raise GateError(f"Performance: no table has the cases {', '.join(unlisted)}")
+    misplaced = sorted(name for name in seen if inventory and name not in workloads)
+    if misplaced:
+        raise GateError(f"Performance: the results table holds {', '.join(misplaced)}, which are not rows to serve")
     # Each ratio column follows its comparator's time column.
     candidate, floor = results[0].index("candidate (us)"), results[0].index("DRAM floor (us)")
     ratios = [i for i, name in enumerate(results[0]) if name == "ratio"]
@@ -295,6 +311,8 @@ def _validate_pr(round_dir: Path, kind: str, issue: int | None) -> None:
         link = f"{'Refs' if kind == 'perf' else 'Closes'} #{issue}"
         if not re.search(rf"^{link}$", body, flags=re.MULTILINE):
             raise GateError(f"{PR_FILE} must link the issue with the line {link}")
+        if kind not in TRAILER_KINDS and body.rstrip().splitlines()[-1] != link:
+            raise GateError(f"{PR_FILE} must end with the line {link}")
 
 
 def _validate_comments(round_dir: Path, kind: str, final_hir: Path, result: str) -> None:
@@ -343,12 +361,12 @@ def _list(provenance: dict, name: str) -> list:
 
 @dataclass
 class Evidence:
-    """The records of a perf or new-op round, which the checks on its state edges and the gate read.
+    """The records of a TileFoundry round, which the checks on its state edges and the gate read.
 
     A perf round on the wiki queue checks its rows behind, *queue_rows*, and its count of measured
     rows, *queue_measured*; a new-op round checks every case of its admitted *inventory*; any
-    other round takes its rows from `workloads` in `provenance.json`. *op*, *inventory* and
-    *published* come from the ledger.
+    other round takes its rows from `workloads` in `provenance.json`, an extension only cases of its
+    *inventory*. *op*, *inventory* and *published* come from the ledger.
     """
 
     dir: Path
@@ -388,6 +406,9 @@ class Evidence:
         workloads = tuple(_list(self.provenance, "workloads"))
         if not all(_real_text(name) for name in workloads):
             raise GateError("provenance workloads must name the workloads the issue or the manifest lists")
+        unknown = [name for name in workloads if self.kind == "extend" and name not in self.inventory]
+        if unknown:
+            raise GateError(f"provenance workloads {', '.join(unknown)} are not admitted cases")
         return workloads
 
     @property
@@ -440,12 +461,15 @@ def _implemented(text: str, op: str | None) -> str | None:
 
 
 def check_op(evidence: Evidence) -> None:
-    """OP -> IMPL: the manifest changes only by the op's `status: spec-only` turning `implemented`, and
-    the new tests failed on the base."""
+    """OP -> IMPL: the new tests failed on the base, and the manifest changes only by a new op's
+    `status: spec-only` turning `implemented`; an extension changes none."""
     changed = _git(evidence.repo, "diff", "--name-only", evidence.base, "--", MANIFEST).stdout.split()
+    if evidence.kind == "extend" and changed:
+        raise GateError(f"an extension changes no {MANIFEST} file: {', '.join(changed)}")
     path = evidence.repo / changed[0] if len(changed) == 1 else None
-    if path is None or not path.is_file() or path.read_text(encoding="utf-8") != _implemented(
-            _git(evidence.repo, "show", f"{evidence.base}:{changed[0]}").stdout, evidence.op):
+    if evidence.kind == "new-op" and (path is None or not path.is_file() or path.read_text(
+            encoding="utf-8") != _implemented(_git(evidence.repo, "show", f"{evidence.base}:{changed[0]}").stdout,
+                                              evidence.op)):
         raise GateError(f"the {MANIFEST} diff must set the status of {evidence.op} from spec-only to "
                         "implemented, and change nothing else")
     _record(evidence.dir, evidence.provenance.get("base_tests"), "base_tests", tilefoundry=False)
@@ -454,8 +478,8 @@ def check_op(evidence: Evidence) -> None:
 def check_implementation(evidence: Evidence) -> None:
     """IMPL -> CLEAN: the implementation records and the Performance table under the bar of the result.
 
-    A perf round also changes the production kernel it declares; a new op may wrap an existing
-    kernel, and its `below bar` needs the stop records.
+    A perf round also changes the production kernel it declares; a new op or an extension may
+    reuse a kernel, and its `below bar` needs the stop records.
     """
     provenance = evidence.provenance
     result = provenance.get("result")
@@ -485,8 +509,8 @@ def check_implementation(evidence: Evidence) -> None:
     if "Performance" not in performance:
         raise GateError(f"{COMMENTS_FILE} lacks the Performance section")
     _validate_performance(performance["Performance"], evidence.workloads, evidence.measured, result,
-                          main=evidence.kind == "perf")
-    if evidence.kind == "new-op" and result == "below bar":
+                          main=evidence.kind == "perf", inventory=evidence.inventory)
+    if evidence.kind != "perf" and result == "below bar":
         check_stop_records(evidence)
 
 
@@ -510,12 +534,12 @@ def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD", work
     """Validate only facts a program can decide without interpreting optimization quality.
 
     Every round binds its records to the commit it ships, records its tests and reviews,
-    fills in its PR text, and keeps out of the paths its kind forbids. A perf or new-op
+    fills in its PR text, and keeps out of the paths its kind forbids. A TileFoundry
     round also passes the checks of its state edges, the findings and the PR comments:
     a perf round on the queue passes its rows behind as *workloads* and its count of
     measured rows as *measured*; a new-op round passes its admitted *inventory*; any other
     round takes its rows from `provenance.json`.
-    Its PR body ends with `Op:`, `Benchmark:` and `Result:` lines that equal *op*,
+    A perf or new-op PR body ends with `Op:`, `Benchmark:` and `Result:` lines that equal *op*,
     *benchmark* and the provenance result where the round records them.
     """
     evidence = Evidence(round_dir.resolve(), tileops_repo.resolve(), kind, issue, workloads, measured, head,
@@ -535,7 +559,7 @@ def validate_round(round_dir: Path, tileops_repo: Path, head: str = "HEAD", work
     _validate_pr(evidence.dir, kind, issue)
     if kind in FOUNDRY_KINDS:
         _validate_perf(evidence)
-        if trailers:
+        if trailers and kind in TRAILER_KINDS:
             _validate_trailers(evidence.dir, {"Op": op, "Benchmark": benchmark, "Result": provenance["result"]})
     return provenance
 
@@ -556,14 +580,14 @@ def _validate_trailers(round_dir: Path, recorded: dict[str, str | None]) -> None
 
 
 def _validate_perf(evidence: Evidence) -> None:
-    """The findings, the checks of every state edge of the kind, and the PR comments of a perf or new-op round."""
+    """The findings, the checks of every state edge of the kind, and the PR comments of a TileFoundry round."""
     _validate_findings(evidence.dir)
     foundry_base = evidence.provenance.get("tilefoundry_base")
     if not isinstance(foundry_base, str) or re.fullmatch(r"[0-9a-f]{40}", foundry_base) is None:
         raise GateError("provenance tilefoundry_base must be the full TileFoundry commit")
     check_reference(evidence)
     check_floor(evidence)
-    if evidence.kind == "new-op":
+    if evidence.kind != "perf":
         check_op(evidence)
     check_implementation(evidence)
     final_hir = _required_file(evidence.dir, evidence.provenance["final_hir"])

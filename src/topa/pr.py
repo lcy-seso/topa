@@ -17,17 +17,19 @@ from topa.config import Config
 from topa.gate import FOUNDRY_KINDS, GateError, read_comments, read_pr, validate_round
 from topa.round import Round, find, pull_request
 
-# A new op has no main to measure its own rows against.
+# A new op's or an extension's results table answers to comparators alone.
 FOUNDRY_CHECKLIST = """
 1. Was final_hir.py analyzed, finalized with schedule finalize, and the kernel written from its TIR?
 2. Do the raw analyze reports justify the chosen placement over the rejected ones?
-3. Was every row of the op measured alternating {cycle}, and every row of
-   another op sharing a changed kernel alternating main and candidate?
+3. Was every row of the results table measured alternating {cycle}, and every row
+   of the other-ops table alternating main and candidate?
 4. Does every claim in pr-template.md and pr-comments.md match the evidence?"""
 CHECKLIST = {
     "perf": FOUNDRY_CHECKLIST.format(cycle="main, candidate and comparators"),
     "new-op": FOUNDRY_CHECKLIST.format(cycle="candidate and comparators")
     + "\n5. Does the diff add the op the issue asks for, and nothing else?",
+    "extend": FOUNDRY_CHECKLIST.format(cycle="candidate and comparators")
+    + "\n5. Does the diff serve the rows to serve, and nothing else?",
     "general": """
 1. Does the diff do everything the issue asks, and nothing it does not?
 2. Does each new test fail on the base and pass on the candidate?
@@ -73,7 +75,7 @@ def _post_comments(config: Config, number: int, comments: list[tuple[str, str]],
 
 
 def open_pr(config: Config, slug: str | None = None, *, reviewed: bool = False, watch: bool = True) -> str:
-    """Gate the round, then publish its PR; a perf or new-op round must be in state PR."""
+    """Gate the round, then publish its PR; a TileFoundry round must be in state PR."""
     found = find(config, slug)
     kind = found.meta.get("kind", "perf")
     phase = ledger.rounds().get(found.slug, {}).get("phase")

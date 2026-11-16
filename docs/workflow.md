@@ -49,18 +49,22 @@ check passes. It fetches upstream main first; that commit is the round's base.
 | `topa round start <Op>`, `<Op>` implemented | perf on the op's row of the wiki queue |
 | `topa round start --issue <N>`, title starts with `[Perf]` | perf on the workloads the issue lists |
 | `topa round start --issue <N>`, title names exactly one spec-only op | new-op on that op |
-| `topa round start --issue <N>`, anything else | general |
+| `topa round start --issue <N>`, title names ops, all implemented | extend on those ops |
+| `topa round start --issue <N>`, title names no op | general |
 
-A title names `<Op>` when `<Op>` is a whole word of it. Admission refuses:
+A title names `<Op>` when `<Op>` is a whole word of it with a manifest entry. Every change to
+an op goes through TileFoundry: only the TileFoundry kinds may change `src/tileops/_kernels/`
+or `src/tileops/csrc/`. Admission refuses:
 
 - an op with no manifest entry under `src/tileops/manifest/spec/`, or several;
-- a spec-only entry without a `family`, or with a workload without a `label`;
-- an implemented op that is not in the queue, or that comes with `--issue`;
-- an issue that is closed, that does not name the op, or that names several spec-only ops;
+- a spec-only or extended entry without a `family`, or with a workload without a `label`;
+- an implemented op that is not in the queue, or `topa round start <Op> --issue <N>` on one;
+- an issue that is closed, that does not name the op, that names several spec-only ops, or an op
+  whose status is neither spec-only nor implemented;
 - several open issues that name the op;
-- for a new op: an issue assigned to someone else, or an open or draft PR by someone else
-  whose title or body names the op or closes the issue;
-- a live round on the same op or issue, or more live rounds than `max_rounds`.
+- for a new op or an extension: an issue assigned to someone else, or an open or draft PR by
+  someone else that closes the issue or, for a new op, whose title or body names the op;
+- a live round on an op or the issue it works, or more live rounds than `max_rounds`.
 
 A round on an issue assigns the issue to you when no one holds it, and unassigns it if the
 start fails.
@@ -69,21 +73,24 @@ start fails.
 | --- | --- | --- | --- |
 | perf | the [perf brief](../src/topa/kit/round/perf/brief.md), with the earlier attempts at the op | `[Perf][foundry][<Family>] ...` | `Refs #N`; the nightly confirms the result |
 | new-op | the [new-op brief](../src/topa/kit/round/new-op/brief.md) on every workload `label` x dtype case of the entry; no earlier attempts | `[Feat][foundry][<Family>] ...` | `Closes #N` when there is an issue |
+| extend | the [extend brief](../src/topa/kit/round/extend/brief.md) on the rows to serve: the cases of the ops' entries main refuses, and those the issue names | `[<Type>][foundry][<Family>] ...` | `Closes #N`, the body's last line |
 | general | understand, write a failing test, implement, verify, review, clean up, PR | `[<Type>] ...` | `Closes #N` |
 
 - A new op has no main, so its Performance table has no main column, and `below bar` asks
   that the op is implemented, correct and tested, and that its stop records hold.
 - A new op may wrap an existing kernel; its twin check still runs.
+- An extension's rows to serve have no main column either; every other case of its ops sits
+  in the other-ops table and must not be slower than main.
 - The `[foundry]` origin in a title makes TileOPs add the `foundry` label to the PR.
 
 ## States
 
-A perf or new-op round moves along one state graph. `topa round start` puts it in REQ; the
+A TileFoundry round moves along one state graph. `topa round start` puts it in REQ; the
 agent runs `topa round transition <state> --reason "..."` at each exit, and `topa round
 status` shows the state.
 
 ```text
-REQ -> HIR -> FLOOR -> [OP, new-op only] -> IMPL -> CLEAN -> REVIEW -> FINAL -> PR -> CI -> DONE
+REQ -> HIR -> FLOOR -> [OP, new-op and extend] -> IMPL -> CLEAN -> REVIEW -> FINAL -> PR -> CI -> DONE
 ```
 
 - REVIEW exits to PR once the PR is published; PR and CI return to CLEAN after a change.
@@ -97,20 +104,21 @@ REQ -> HIR -> FLOOR -> [OP, new-op only] -> IMPL -> CLEAN -> REVIEW -> FINAL -> 
 | --- | --- |
 | HIR -> FLOOR | the `reference_check` record |
 | FLOOR -> OP / IMPL | a floor record per row (new-op: per admitted case); at least two placements, one chosen |
-| OP -> IMPL | the manifest diff is the op's `status: spec-only` turned `implemented`, alone; `base_tests` records the new tests failing on the base |
-| IMPL -> CLEAN | `schedule`, `twin_check`, `iterations`, `benchmark`; the Performance table, a row per row (new-op: per admitted case), under the bar of the result; perf: the declared production kernel changed |
+| OP -> IMPL | new-op: the manifest diff is the op's `status: spec-only` turned `implemented`, alone; extend: no manifest diff; `base_tests` records the new tests failing on the base |
+| IMPL -> CLEAN | `schedule`, `twin_check`, `iterations`, `benchmark`; the Performance table, a row per row (new-op: per admitted case), under the bar of the result; extend: the rows to serve alone in the results table, every other admitted case in the other-ops table; perf: the declared production kernel changed |
 | REVIEW -> PR | the round has published its PR (a `pr` event in the ledger) |
 | any -> STOPPED | `## Stop records` in `report.md` |
 
 ## The gate
 
 `topa gate` runs the shared checks on every round: the commit binding, the recorded tests
-and reviews, the PR text, and the forbidden paths of the kind. A perf or new-op round also
-passes the checks of its edges again, `findings.json`, and the `Op:`, `Benchmark:` and
-`Result:` lines.
+and reviews, the PR text, and the forbidden paths of the kind. A TileFoundry round also
+passes the checks of its edges again and `findings.json`; a perf or new-op round also the
+`Op:`, `Benchmark:` and `Result:` lines.
 
 | Kind | Forbidden paths |
 | --- | --- |
 | perf | `benchmarks/`, `workloads/`, `src/tileops/manifest/`, `scripts/`, `.github/` |
 | new-op | `scripts/`, `.github/`; in the manifest, all but the op's status line |
-| general | none |
+| extend | `src/tileops/manifest/`, `scripts/`, `.github/` |
+| general | `src/tileops/_kernels/`, `src/tileops/csrc/` |

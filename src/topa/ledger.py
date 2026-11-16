@@ -21,7 +21,7 @@ LEDGER = HOME / "ledger.jsonl"
 
 # The event that leaves a round in each state; any other event keeps the state.
 # `create` is written before the first resource exists, so `topa round stop --rm`
-# can find what a start that failed half way left behind. A perf or new-op round
+# can find what a start that failed half way left behind. A TileFoundry round
 # also has a `phase` on its state graph: REQ from `create`, then each `transition`'s `to`.
 STATES = {"create": "starting", "start": "running", "fail": "failed",
           "stop": "stopped", "remove": "removed"}

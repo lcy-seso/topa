@@ -1,4 +1,4 @@
-"""The state graph of a TileFoundry round (perf or new-op) and the checks on its edges.
+"""The state graph of a TileFoundry round and the checks on its edges.
 
 `topa round transition` moves a round along the graph; `topa round start` puts it in REQ.
 A rule is added by attaching a check from `topa.gate` to an edge in `CHECKS`.
@@ -18,6 +18,7 @@ FORWARD = {
                "CLEAN": {"REVIEW"}, "REVIEW": {"FINAL", "PR"}, "FINAL": {"PR"}, "PR": {"CLEAN", "CI"},
                "CI": {"DONE", "CLEAN"}},
 }
+FORWARD["extend"] = FORWARD["new-op"]
 # A failed check returns to the state that owns the fix: one of these, at or before the current state.
 REWORK = ("HIR", "FLOOR", "OP", "IMPL", "CLEAN")
 STATES = ("REQ", "HIR", "FLOOR", "OP", "IMPL", "CLEAN", "REVIEW", "FINAL", "PR", "CI", "DONE", "STOPPED")

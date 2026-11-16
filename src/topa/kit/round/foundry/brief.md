@@ -1,10 +1,10 @@
-<!-- The TileFoundry text that perf and new-op briefs share. Each `<!-- NAME -->` line starts
+<!-- The TileFoundry text the perf, new-op and extend briefs share. Each `<!-- NAME -->` line starts
 the text that fills `{{FOUNDRY_NAME}}` in a kind's brief. -->
 
 <!-- BAR -->
-- Both `bar met` and `below bar` also require that no row of any op is slower than main:
-  main / candidate below 0.99, the nightly's threshold for a row behind.
-- "Any op" includes every op that shares a kernel the round changes.
+- Both `bar met` and `below bar` also require that no row of a Performance table with a main
+  column is slower than main: main / candidate below 0.99, the nightly's threshold for a row behind.
+- The other-ops table holds every op that shares a kernel the round changes.
 - `topa gate` checks this rule on the Performance medians; the review checks the repeats.
 
 <!-- RULES -->
@@ -112,7 +112,7 @@ Measure this way:
   `git -C {{TILEOPS_WORKTREE}} worktree add --detach {{ROUND_DIR}}/work/<name> <commit>`.
 - Time each snapshot with its `src` first on `PYTHONPATH`.
 - Run at least three repeats; a repeat is one cycle of main, candidate and comparators on
-  the round's GPU, with the L2 flush. Leave main out of a row whose op main does not have.
+  the round's GPU, with the L2 flush. Time main only on the rows of a table with a main column.
 - Keep each repeat's timings, and report the median of `device_busy_ms`.
 
 Write the Performance section of `pr-comments.md` from the last measurement.
