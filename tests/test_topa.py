@@ -1077,6 +1077,25 @@ class ReviewLoopTests(unittest.TestCase):
         self.assertEqual([e["event"] for e in events], ["attempt", "posted", "attempt", "posted", "end"])
         self.assertEqual(events[2]["changed"], {"comments": ["m", "reply"]})
 
+    def test_a_second_single_review_of_the_same_head_rechecks_the_posted_findings(self) -> None:
+        heads, previous, last = iter(["a", "a", "b"]), [], [None]
+
+        def prepare(*a):
+            last[0] = next(heads)
+            return {"head": last[0], "base": "m"}
+
+        found = {"summary": "s", "comments": [], "threads": [], "open_faults": 0}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch("topa.review.folder_of", return_value=Path(tmp)), \
+                mock.patch("topa.review.prepare", side_effect=prepare), \
+                mock.patch("topa.review_loop._review", side_effect=lambda *a: (previous.append(a[6]), found)[1]), \
+                mock.patch("topa.review.post", return_value={"review": "u"}), \
+                mock.patch("topa.sh.gh_json", side_effect=lambda *a: {"state": "open", "head": {"sha": last[0]}}), \
+                mock.patch("topa.review_loop._merge_base", return_value="m"):
+            modes = [review_loop.once(defaults(), 7)["mode"] for _ in range(3)]
+        self.assertEqual(modes, ["full", "recheck", "full"])
+        self.assertEqual([p.name if p else None for p in previous], [None, "posted.json", None])
+
     def test_lessons_collect_fixed_findings_and_ready_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             rounds, knowledge = Path(tmp) / "rounds", Path(tmp) / "review.md"

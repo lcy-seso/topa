@@ -20,7 +20,7 @@ Run `topa` from `PATH`. State lives in `~/.topa/`:
 | a new round | `topa round start <Op> [--issue <N>]` or `topa round start --issue <N>` (`--dry-run` first if unsure) |
 | to review a PR until it settles | `topa round review <PR>` |
 | what a review round is doing | `herdr pane read <pane>`; `rounds/<slug>/loop.json` and `attempts/` |
-| review findings to promote | `topa review lessons` |
+| review findings to promote | `topa lessons` |
 | to stop the agent, keep everything | `topa round stop <slug>` |
 | to release everything | `topa round stop <slug> --rm` |
 | to run a command against a TileOPs branch outside a round | `cd <worktree> && topa run <cmd>` |
@@ -45,7 +45,7 @@ Run `topa` from `PATH`. State lives in `~/.topa/`:
 
 ## Review rounds
 
-- A review round's pane runs `topa review loop`, not an agent; `say` does not reach it.
+- A review round's pane runs `topa round drive`, not an agent; `say` does not reach it.
 - The loop ends on its own: settled (approving a PR someone else wrote), PR closed, or a limit.
   `status` shows why in the third column. Stop the round afterwards to free its container.
 - Show `## Review knowledge` candidates from `report.md`; promote them into

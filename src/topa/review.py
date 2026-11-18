@@ -115,30 +115,26 @@ def folder_of(config: Config, pr: int) -> Path:
     return config.reviews / config.upstream / str(pr)
 
 
-def prepare(config: Config, pr: int, folder: Path | None = None, worktree: Path | None = None,
-            fixed: Iterable[int] | None = None) -> dict[str, Any]:
-    """Write the review inputs of *pr* into *folder* and check out its head.
-
-    A given *worktree* is checked out in place, never re-created: a container mounts it.
-    """
-    folder = folder or folder_of(config, pr)
+def prepare(config: Config, pr: int, folder: Path, worktree: Path, fixed: Iterable[int] | None = None) -> dict[str, Any]:
+    """The worktree is checked out in place, never re-created: a container may mount it."""
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "findings.json").unlink(missing_ok=True)
     repo = config.tileops_repo
     view = sh.gh_json("api", f"repos/{config.upstream}/pulls/{pr}")
-    remote = sh.github_remote(repo, config.upstream)
     ref = review_ref(config, pr)
-    sh.run(["git", "-C", repo, "fetch", "--quiet", remote, f"+pull/{pr}/head:{ref}",
-            f"+refs/heads/{view['base']['ref']}:{ref}-base"])
-    head = sh.run(["git", "-C", repo, "rev-parse", ref])
-    base = sh.run(["git", "-C", repo, "merge-base", f"{ref}-base", head])
-    if worktree is None:
-        worktree = folder / "worktree"
-        sh.run(["git", "-C", repo, "worktree", "remove", "--force", worktree], check=False)
+    head = view["head"]["sha"]
+    local = lambda name: sh.run(["git", "-C", repo, "rev-parse", "--verify", "--quiet", name], check=False)
+    if local(ref) != head or local(f"{ref}-base") != view["base"]["sha"]:
+        remote = sh.github_remote(repo, config.upstream)
+        sh.run(["git", "-C", repo, "fetch", "--quiet", remote, f"+pull/{pr}/head:{ref}",
+                f"+refs/heads/{view['base']['ref']}:{ref}-base"])
+        head = local(ref)
+    if not worktree.exists():
         sh.run(["git", "-C", repo, "worktree", "add", "--quiet", "--detach", worktree, head])
     else:
         sh.run(["git", "-C", worktree, "checkout", "--quiet", "--force", "--detach", head])
         sh.run(["git", "-C", worktree, "clean", "--quiet", "-fd"])
+    base = sh.run(["git", "-C", repo, "merge-base", f"{ref}-base", head])
     paths = [p for p in sh.run(["git", "-C", repo, "diff", "-z", "--name-only", "--no-renames", base, head])
              .split("\0") if p]
     diff = sh.run(["git", "-C", repo, "diff", "--no-color", "--no-ext-diff", "-M", base, head])
@@ -203,23 +199,17 @@ def comment_ids(config: Config, pr: int, review_id: int) -> list[int]:
     return [int(i) for i in out.split()]
 
 
-def post(config: Config, pr: int, folder: Path | None = None, *, event: str = "COMMENT",
-         attempt: str | None = None) -> dict[str, Any]:
-    """Post `findings.json` as one review; without *folder*, also remove the worktree it made."""
-    single = folder is None
-    folder = folder or folder_of(config, pr)
+def post(config: Config, pr: int, folder: Path, *, event: str, attempt: str) -> dict[str, Any]:
     head = json.loads((folder / "pr.json").read_text())["head"]
     findings = json.loads((folder / "findings.json").read_text())
     comments = select(findings.get("comments") or [], commentable((folder / "pr.diff").read_text()),
                       _gh(config, f"pulls/{pr}/comments"))
-    tag = f"\n{ATTEMPT.format(attempt)}" if attempt else ""
-    payload = {"commit_id": head, "event": event, "body": f"{findings.get('summary', '').strip()}\n\n{MARKER}{tag}",
+    payload = {"commit_id": head, "event": event,
+               "body": f"{findings['summary'].strip()}\n\n{MARKER}\n{ATTEMPT.format(attempt)}",
                "comments": [{"path": c["path"], "line": c["line"], "side": c.get("side", "RIGHT"),
                              "body": f"{c['body']}\n\n{MARKER}"} for c in comments]}
     out = sh.run(["gh", "api", "--method", "POST", f"repos/{config.upstream}/pulls/{pr}/reviews", "--input", "-"],
                  input=json.dumps(payload))
-    if single:
-        sh.run(["git", "-C", config.tileops_repo, "worktree", "remove", "--force", folder / "worktree"], check=False)
     submitted = json.loads(out)
     return {"review": submitted["html_url"], "posted": len(comments), "id": submitted["id"],
             "comment_ids": comment_ids(config, pr, submitted["id"]) if comments else []}
