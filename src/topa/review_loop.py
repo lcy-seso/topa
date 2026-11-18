@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
@@ -21,15 +22,19 @@ from topa.config import Config
 class Limits:
     poll: int = 180            # seconds
     attempts: int = 15
-    idle: int = 3600           # seconds
+    idle: int = 10 * 3600      # seconds; human authors answer slowly
     wall: int = 24 * 3600      # seconds
     reviewer: int = 1800       # seconds
     tries: int = 3             # reviewer runs per attempt
 
 
 FULL = "Review the full diff."
+IN_ROUND = """- Commands other than git, gh, topa and file tools run in the round container. Run a test
+  when a finding or a thread's fix depends on behavior.
+- Prefix any timing run with `topa-bench`."""
+ON_HOST = "- Commands run on the host; review by reading the code."
 RECHECK = ("Recheck: reassess every fault in {previous} (its comments, threads and summary) and every thread "
-           "of `threads.json`, answer new comments in the summary, and leave `comments` empty.")
+           "of `threads.json`, and leave `comments` empty.")
 
 PROMPT = """You are the reviewer of attempt {attempt} on PR #{pr} of {repo}.
 
@@ -46,9 +51,7 @@ Follow {instructions}.
 Apply these checklists:
 {checklists}
 
-- Commands other than git, gh, topa and file tools run in the round container. Run a test
-  when a finding or a thread's fix depends on behavior.
-- Prefix any timing run with `topa-bench`.
+{commands}
 - Do not change tracked files in the worktree, push, or write on GitHub.
 - Write the findings to {dir}/findings.json, with "attempt": "{attempt}" added at the top level.
 {retry}"""
@@ -71,14 +74,18 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True).replace("\\r", "").encode()).hexdigest()[:16]
 
 
+def _merge_base(config: Config, view: dict[str, Any]) -> str:
+    return sh.run(["gh", "api", f"repos/{config.upstream}/compare/{view['base']['sha']}...{view['head']['sha']}",
+                   "--jq", ".merge_base_commit.sha"])
+
+
 def signature(config: Config, pr: int, own: dict[str, list[int]] | None = None) -> dict[str, Any]:
     """*own* holds the ids topa posted, by endpoint: `reviews` and `comments` (inline)."""
     own = own or {}
     mine = {f"pulls/{pr}/reviews": set(own.get("reviews", ())), f"pulls/{pr}/comments": set(own.get("comments", ()))}
     view = sh.gh_json("api", f"repos/{config.upstream}/pulls/{pr}")
     # Why the merge base, not the base tip: the tip moves on every merge to main, the diff does not.
-    merge_base = sh.run(["gh", "api", f"repos/{config.upstream}/compare/{view['base']['sha']}...{view['head']['sha']}",
-                         "--jq", ".merge_base_commit.sha"])
+    merge_base = _merge_base(config, view)
     collections = {endpoint: sorted([c["id"], c["body"] or ""] for c in review._gh(config, endpoint)
                                     if c["type"] != "Bot" and c["id"] not in mine.get(endpoint, ())
                                     and review.MARKER not in (c["body"] or ""))
@@ -154,7 +161,7 @@ def _why(error: Exception) -> str:
 
 
 def _review(config: Config, round_dir: Path, pr: int, attempt: str, prepared: dict[str, Any],
-            limits: Limits, previous: Path | None) -> dict[str, Any]:
+            limits: Limits, previous: Path | None, commands: str = IN_ROUND) -> dict[str, Any]:
     folder = Path(prepared["dir"])
     errors: list[str] = []
     for tries in range(1, limits.tries + 1):
@@ -162,7 +169,7 @@ def _review(config: Config, round_dir: Path, pr: int, attempt: str, prepared: di
         retry = ("\nFix these errors:\n" + "\n".join(f"- {e}" for e in errors)
                  if errors else "")
         prompt = PROMPT.format(attempt=attempt, pr=pr, repo=config.upstream, retry=retry,
-                               mode=RECHECK.format(previous=previous) if previous else FULL,
+                               mode=RECHECK.format(previous=previous) if previous else FULL, commands=commands,
                                checklists="\n".join(f"- {p}" for p in prepared["checklists"]),
                                **{k: prepared[k] for k in ("instructions", "dir", "worktree", "knowledge")})
         try:
@@ -320,6 +327,37 @@ def drive(config: Config, slug: str, limits: Limits = Limits()) -> int:
 
 
 # --- lessons --------------------------------------------------------------------------
+
+
+def once(config: Config, pr: int, limits: Limits = Limits()) -> dict[str, Any]:
+    """Review *pr* once on the host and post a COMMENT review; on a diff already reviewed,
+    recheck the findings in `posted.json` instead."""
+    folder = review.folder_of(config, pr)
+    folder.mkdir(parents=True, exist_ok=True)
+    with _sole_driver(folder):
+        last, pending = folder / "posted.json", folder / "pending.json"
+        if pending.exists():
+            record = json.loads(pending.read_text())
+            if posted := review.posted(config, pr, record["attempt"]):
+                _write(last, record)
+                pending.unlink()
+                return {"review": posted["review"], "mode": record["mode"], "open_faults": record["open_faults"]}
+            pending.unlink()
+        prepared = review.prepare(config, pr, folder, folder / "worktree")
+        diff = [prepared["head"], prepared["base"]]
+        previous = last if last.exists() and json.loads(last.read_text())["diff"] == diff else None
+        attempt = f"{config.upstream}#{pr}-{uuid.uuid4().hex[:12]}"
+        found = _review(config, folder, pr, attempt, prepared, limits, previous, ON_HOST)
+        view = sh.gh_json("api", f"repos/{config.upstream}/pulls/{pr}")
+        if view["state"] != "open" or [view["head"]["sha"], _merge_base(config, view)] != diff:
+            raise SystemExit(f"PR #{pr} changed during the review; nothing was posted")
+        mode = "recheck" if previous else "full"
+        record = {"diff": diff, "attempt": attempt, "mode": mode, **found}
+        _write(pending, record)
+        posted = review.post(config, pr, folder, event="COMMENT", attempt=attempt)
+        _write(last, record)
+        pending.unlink()
+    return {"review": posted["review"], "mode": mode, "open_faults": found["open_faults"]}
 
 
 def lessons(config: Config) -> dict[str, Any]:

@@ -15,7 +15,6 @@ files), `pr.diff`, `threads.json` (unresolved threads topa started) and `comment
 4. Do not raise the finding of a thread in `threads.json` again.
 5. Read the review knowledge file. A comment needs a fault in the code; a candidate alone
    is not one. Do not flag what its `Do not flag` section names.
-6. Answer questions in `comments.json` addressed to the review in the summary.
 
 ## Findings
 
@@ -35,12 +34,23 @@ files), `pr.diff`, `threads.json` (unresolved threads topa started) and `comment
 
 - Anchor each comment on a line of `pr.diff`: `RIGHT` for an added or context line of the
   new file, `LEFT` for a removed line of the old one.
-- Write one comment per finding as `<what is wrong and why> → <what to change>`, naming
-  the function, variable or pattern.
-- State each comment as a claim that is true or false; hedges such as "consider" fail this.
-- Put only what spans files, and which `threads.json` threads the head fixes, in the
-  summary; write `No findings.` when there is nothing. Do not repeat inline comments there.
+- Write one comment per finding, naming the function, variable or pattern. Each bullet is
+  one sentence of at most 30 words:
+
+  ```markdown
+  - **Problem:** <what is wrong>
+  - **Case:** <one input or call that shows it>
+  - **Fix:** <what to change>
+  ```
+
+- Give at most one example or measured number per comment; leave out what the code or a
+  docstring already says.
+- State **Problem** and **Case** as claims that are true or false, and **Fix** as a direct
+  instruction; hedges such as "consider" fail this.
+- Write the summary as bullets of one sentence each: what spans files, which `threads.json`
+  threads the head fixes, and answers to questions in `comments.json` addressed to the review. Write `No findings.` when there is
+  nothing. Do not repeat inline comments there.
 - For an external PR (`association` in `pr.json` is not `OWNER`, `MEMBER` or
-  `COLLABORATOR`), follow the External PRs section of `general.md` instead: base-branch
+  `COLLABORATOR`), also follow the External PRs section of `general.md`: base-branch
   faults and missing tests go in the summary, and `Approve.` replaces `No findings.`.
 - Write in English.

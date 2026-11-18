@@ -753,7 +753,7 @@ def start_review(config: Config, pr: int, *, dry_run: bool = False) -> dict[str,
         _cd_pane(pane, round_dir)
         passed = [f"{name}={value}" for name, value in os.environ.items()
                   if value and (name in LOOP_ENVIRONMENT or name.startswith("TOPA_"))]
-        sh.herdr("pane", "run", pane, shlex.join(["env", *passed, str(topa), "review", "loop", slug]))
+        sh.herdr("pane", "run", pane, shlex.join(["env", *passed, str(topa), "round", "drive", slug]))
     except BaseException as error:
         ledger.append("fail", round=slug, error=str(error).strip()[:2000])
         sh.note(f"round {slug} failed to start; release what it holds with: topa round stop {slug} --rm")

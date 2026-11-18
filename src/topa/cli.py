@@ -123,27 +123,20 @@ def _pr(args: argparse.Namespace) -> int:
     return 0
 
 
-def _review_prepare(args: argparse.Namespace) -> int:
-    from topa.review import prepare
+def _review(args: argparse.Namespace) -> int:
+    from topa.review_loop import once
 
-    _print_json(prepare(config_module.load(), args.pr))
+    _print_json(once(config_module.load(), args.pr))
     return 0
 
 
-def _review_post(args: argparse.Namespace) -> int:
-    from topa.review import post
-
-    _print_json(post(config_module.load(), args.pr))
-    return 0
-
-
-def _review_loop(args: argparse.Namespace) -> int:
+def _round_drive(args: argparse.Namespace) -> int:
     from topa.review_loop import Limits, drive
 
     return drive(config_module.load(), args.round, Limits(poll=args.poll))
 
 
-def _review_lessons(args: argparse.Namespace) -> int:
+def _lessons(args: argparse.Namespace) -> int:
     from topa.review_loop import lessons
 
     _print_json(lessons(config_module.load()))
@@ -208,6 +201,10 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("pr", type=int)
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=_round_review)
+    p = rounds.add_parser("drive", help="drive a review round")
+    p.add_argument("round")
+    p.add_argument("--poll", type=int, default=180, help="seconds between polls")
+    p.set_defaults(func=_round_drive)
     p = rounds.add_parser("say", help="send the round's agent a message")
     p.add_argument("round")
     p.add_argument("text", nargs="+")
@@ -244,20 +241,11 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--no-watch", action="store_true", help="do not wait on the PR checks")
     p.set_defaults(func=_pr)
 
-    review = sub.add_parser("review", help="review a TileOPs PR").add_subparsers(
-        dest="review_command", required=True)
-    p = review.add_parser("prepare", help="write the PR's review inputs and check out its head")
+    p = sub.add_parser("review", help="review a TileOPs PR once and post a COMMENT review")
     p.add_argument("pr", type=int)
-    p.set_defaults(func=_review_prepare)
-    p = review.add_parser("post", help="post findings.json as one COMMENT review")
-    p.add_argument("pr", type=int)
-    p.set_defaults(func=_review_post)
-    p = review.add_parser("loop", help="drive a review round")
-    p.add_argument("round")
-    p.add_argument("--poll", type=int, default=180, help="seconds between polls")
-    p.set_defaults(func=_review_loop)
-    p = review.add_parser("lessons", help="the review findings and knowledge entries a person can promote")
-    p.set_defaults(func=_review_lessons)
+    p.set_defaults(func=_review)
+    p = sub.add_parser("lessons", help="review findings and knowledge entries a person can promote")
+    p.set_defaults(func=_lessons)
 
     hook = sub.add_parser("hook", help="round agent hooks").add_subparsers(dest="hook_command", required=True)
     p = hook.add_parser("pre-tool-use", help="route a round's shell commands into its container")

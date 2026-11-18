@@ -19,7 +19,7 @@
   review rounds' reports.
 - `src/topa/kit/review/review.md` is how a review reads the inputs and writes the findings.
 - `src/topa/kit/review/checklists/` holds what a review checks beyond TileOPs's own docs and CI.
-  `topa review prepare` names the ones the changed paths need. A round applies them in its
+  A review loads the ones the changed paths need. A round applies them in its
   final review, before its PR opens.
 - `src/topa/kit/container/` holds the agent image: the TileOPs runner image plus sshd, and
   `topa-bench`, which every container mounts at `/usr/local/bin/`.
@@ -42,8 +42,9 @@
   claim.lock                   held while a round claims its op
   locks/gpu-<N>.lock           held by `topa-bench` while it times on card N
   rounds/<slug>/               the round's output; topa never deletes it
-  reviews/<owner>/<repo>/<PR>/  a PR reviewed once: its inputs, findings.json, and worktree/
-                               at the PR head until `topa review post`
+  reviews/<owner>/<repo>/<PR>/  a PR reviewed once: its inputs, worktree/ at the PR head,
+                               posted.json (the last findings posted, with their head and base)
+                               and pending.json while a review is being posted
   rounds/review-<PR>-r<k>/     a review round: loop.json (attempts, deadlines, the attempt
                                being posted), attempts/<n>/ (inputs, findings.json,
                                result.json), report.md with `## Review knowledge`
